@@ -84,3 +84,14 @@ No se usa `sysinfo` ni crates parecidos: las llamadas a Windows están escritas 
 - **Instancia única con mutex con nombre** (`Local\Vigia-<hash de la carpeta de datos>`) · archivo de bloqueo · el mutex es atómico y Windows lo libera solo si el proceso muere.
 - **Un hilo por petición HTTP (máx. 16)** · un solo hilo · un cliente lento no bloquea la interfaz ni el cierre.
 - **Minuto repetido = combinar ponderando por muestras** · reemplazar · reiniciar Vigía dentro de un minuto no pierde datos.
+
+## H6 · Avisos
+
+- **Reglas guardadas como JSON en la tabla `config`**, con valores por omisión (memoria > 90 % durante 5 min, un proceso > 50 % de CPU durante 5 min, unidad con < 10 % libre, inicio y puertos activados) · archivo aparte · una sola base de datos que respaldar.
+- **El motor usa la hora de cada muestra, no el reloj** · leer el reloj · las pruebas simulan minutos con muestras falsas.
+- **«Sostenido» = todas las muestras seguidas por encima del umbral**; una sola muestra por debajo reinicia la cuenta · promedio móvil · es la definición más simple y fácil de explicar.
+- **CPU por proceso en % del equipo completo**, igual que la tabla · % de un núcleo · coherente con lo que se ve en pantalla.
+- **No repetir el mismo aviso antes de 1 hora (6 horas para disco)**, por regla y por sujeto (proceso, unidad) · avisar en cada muestra · evita una avalancha de avisos.
+- **Los valores que llegan de la interfaz se corrigen a rangos razonables** (`Reglas::corregidas`) · rechazar · más amable y igual de seguro.
+- **Puertos nuevos: por omisión solo avisan los accesibles desde otros equipos** (`puerto_solo_red`) · avisar de todos · en la primera prueba real hubo 29 avisos, casi todos de herramientas de desarrollo en 127.0.0.1. Se puede desactivar en la pantalla Avisos.
+- **La referencia de inicio y puertos se actualiza aunque la regla esté desactivada** · no revisar · si se vuelve a activar no aparece una avalancha de cambios viejos.

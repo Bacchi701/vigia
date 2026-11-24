@@ -74,7 +74,9 @@ pub fn revisar_puertos(conn: &Connection, actuales: &[PuertoEscucha]) -> Resulta
     Ok(nuevos
         .into_iter()
         .map(|p| Cambio {
-            tipo: "puerto_nuevo",
+            // Se distingue si el puerto acepta conexiones de otros equipos: por
+            // omisión solo esos generan aviso (ver `Reglas::puerto_solo_red`).
+            tipo: if p.expuesto { "puerto_nuevo" } else { "puerto_nuevo_local" },
             titulo: format!("{} escucha en el puerto {} {}", p.proceso, p.protocolo, p.puerto),
             detalle: if p.expuesto {
                 format!(

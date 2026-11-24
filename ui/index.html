@@ -941,7 +941,36 @@ function marcarContador(n) {
   if (b) b.textContent = n ? `Avisos (${n})` : "Avisos";
 }
 $("#marcar-vistos").onclick = async () => { await api("/api/avisos/vistos", { method: "POST" }).catch(() => {}); cargarAvisos(); };
-AL_ENTRAR.avisos = cargarAvisos;
+
+// ---------- Reglas ----------
+let reglas = null;
+async function cargarReglas() {
+  try { reglas = await api("/api/reglas"); } catch (e) { return; }
+  const n = (campo, min, max, paso) => `<input type="number" data-campo="${campo}" value="${reglas[campo]}" min="${min}" max="${max}" step="${paso}" style="width:72px">`;
+  const c = (campo) => `<input type="checkbox" data-campo="${campo}" ${reglas[campo] ? "checked" : ""}>`;
+  $("#reglas").innerHTML = `<div class="panel"><div class="fila entre"><h3>Reglas</h3><span class="suave chico" id="reglas-estado"></span></div>
+    <div class="bloque" style="display:grid;gap:10px">
+      <label class="fila">${c("memoria_activa")} Memoria del sistema por encima de ${n("memoria_pct", 10, 100, 1)} % durante ${n("memoria_min", 1, 1440, 1)} minutos</label>
+      <label class="fila">${c("cpu_activa")} Un proceso usa más de ${n("cpu_pct", 1, 100, 1)} % de la CPU del equipo durante ${n("cpu_min", 1, 1440, 1)} minutos</label>
+      <label class="fila">${c("disco_activa")} Una unidad tiene menos de ${n("disco_pct", 0.1, 99, 0.5)} % de espacio libre</label>
+      <label class="fila">${c("inicio_activa")} Aparece o desaparece un programa de inicio</label>
+      <label class="fila">${c("puerto_activa")} Un programa empieza a escuchar en un puerto TCP nuevo</label>
+      <label class="fila" style="margin-left:26px">${c("puerto_solo_red")} Solo si acepta conexiones de otros equipos (ignora los de 127.0.0.1, comunes en herramientas de desarrollo)</label>
+    </div>
+    <div class="fila bloque"><button id="guardar-reglas" class="activo">Guardar reglas</button>
+      <span class="suave chico">Un mismo aviso no se repite antes de una hora (seis horas para el espacio en disco).</span></div></div>`;
+  $("#guardar-reglas").onclick = guardarReglas;
+}
+async function guardarReglas() {
+  const nuevas = { ...reglas };
+  $$("#reglas [data-campo]").forEach((i) => { nuevas[i.dataset.campo] = i.type === "checkbox" ? i.checked : Number(i.value); });
+  try {
+    reglas = await api("/api/reglas", { method: "POST", body: JSON.stringify(nuevas) });
+    await cargarReglas();
+    $("#reglas-estado").textContent = "Guardadas.";
+  } catch (e) { $("#reglas-estado").textContent = "No se pudieron guardar: " + e.message; }
+}
+AL_ENTRAR.avisos = () => { cargarReglas(); cargarAvisos(); };
 
 // =====================================================================
 // Arranque

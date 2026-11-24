@@ -62,6 +62,8 @@ pub struct Estado {
     pub base: Mutex<Connection>,
     /// Análisis de disco: progreso del que está en curso y pedido de cancelar.
     pub disco: EstadoDisco,
+    /// Reglas de avisos vigentes (copia en memoria de lo guardado en la base).
+    pub reglas: Mutex<crate::avisos::Reglas>,
     detener: AtomicBool,
 }
 
@@ -77,6 +79,13 @@ impl Estado {
     }
     pub fn detenido(&self) -> bool {
         self.detener.load(Ordering::SeqCst) || win::sistema_extra::cierre_pedido()
+    }
+
+    /// Registra un aviso en la base. Es el único camino por el que pasan
+    /// todos los avisos (reglas, inicio, puertos).
+    pub fn emitir_aviso(&self, ts: i64, tipo: &str, titulo: &str, detalle: &str) -> Resultado<()> {
+        crate::avisos::registrar(&bloquear(&self.base), ts, tipo, titulo, detalle)?;
+        Ok(())
     }
 
     /// Empieza un análisis de disco en un hilo propio. Falla si ya hay uno.
@@ -170,6 +179,7 @@ pub fn iniciar(config: Config) -> Resultado<App> {
         Some(d) => base::abrir(&d.join("vigia.db"))?,
         None => base::en_memoria()?,
     };
+    let reglas = crate::avisos::leer_reglas(&conn)?;
     let token = nuevo_token()?;
     // Escuchar SOLO en 127.0.0.1: ningún otro equipo de la red puede
     // conectarse. Si el puerto está ocupado, pedimos uno libre (0).
@@ -191,6 +201,7 @@ pub fn iniciar(config: Config) -> Resultado<App> {
         ultima: Mutex::new(None),
         base: Mutex::new(conn),
         disco: EstadoDisco::default(),
+        reglas: Mutex::new(reglas),
         detener: AtomicBool::new(false),
     });
 
@@ -252,11 +263,16 @@ pub fn revisar_cambios(estado: &Estado) -> Resultado<usize> {
     let conn = bloquear(&estado.base);
     let mut cambios = crate::vigilante::revisar_inicio(&conn, &entradas)?;
     cambios.extend(crate::vigilante::revisar_puertos(&conn, &puertos)?);
+    drop(conn);
     let ts = ahora_ms();
-    for c in &cambios {
-        crate::avisos::registrar(&conn, ts, c.tipo, &c.titulo, &c.detalle)?;
+    let reglas = bloquear(&estado.reglas).clone();
+    // La referencia se actualiza siempre; solo el aviso depende de la regla.
+    let mut emitidos = 0;
+    for c in cambios.iter().filter(|c| reglas.permite(c.tipo)) {
+        estado.emitir_aviso(ts, c.tipo, &c.titulo, &c.detalle)?;
+        emitidos += 1;
     }
-    Ok(cambios.len())
+    Ok(emitidos)
 }
 
 impl App {
@@ -307,6 +323,7 @@ impl App {
 
 fn bucle_colector(estado: &Estado) {
     let mut colector = Colector::new();
+    let mut motor = crate::avisos::Motor::default();
     let intervalo = estado.config.intervalo;
     // La primera muestra solo sirve de referencia: sus tasas (CPU %, bytes/s)
     // valen 0 porque no hay con qué comparar. No se registra; la siguiente
@@ -322,7 +339,7 @@ fn bucle_colector(estado: &Estado) {
             // Si nos atrasamos (p. ej. el equipo despertó de suspensión), no
             // intentamos "recuperar" muestras: seguimos desde ahora.
             proxima = (proxima + intervalo).max(ahora);
-            tomar_muestra(estado, &mut colector);
+            tomar_muestra(estado, &mut colector, &mut motor);
         }
         if ahora >= proxima_retencion {
             proxima_retencion = ahora + Duration::from_secs(3600);
@@ -341,7 +358,7 @@ fn bucle_colector(estado: &Estado) {
     }
 }
 
-fn tomar_muestra(estado: &Estado, colector: &mut Colector) {
+fn tomar_muestra(estado: &Estado, colector: &mut Colector, motor: &mut crate::avisos::Motor) {
     let muestra = match colector.muestrear(ahora_ms()) {
         Ok(m) => Arc::new(m),
         Err(e) => {
@@ -350,6 +367,12 @@ fn tomar_muestra(estado: &Estado, colector: &mut Colector) {
         }
     };
     let cerrado = bloquear(&estado.historial).registrar(&muestra);
+    let reglas = bloquear(&estado.reglas).clone();
+    for a in motor.evaluar(&reglas, &muestra) {
+        if let Err(e) = estado.emitir_aviso(muestra.ts, a.tipo, &a.titulo, &a.detalle) {
+            eprintln!("[vigía] error al registrar un aviso: {e}");
+        }
+    }
     *bloquear(&estado.ultima) = Some(muestra);
     if let Some(r) = cerrado
         && let Err(e) = historial::guardar_minuto(&mut bloquear(&estado.base), &r)

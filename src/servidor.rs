@@ -388,6 +388,15 @@ fn api(p: &Peticion, estado: &Arc<Estado>) -> Resultado<Respuesta> {
                 "sin_ver": crate::avisos::sin_ver(&conn)?,
             }))
         }
+        ("GET", "/api/reglas") => Respuesta::json(&*bloquear(&estado.reglas)),
+        ("POST", "/api/reglas") => {
+            let nuevas: crate::avisos::Reglas = serde_json::from_str(&p.cuerpo)
+                .map_err(|e| error(format!("Reglas inválidas: {e}")))?;
+            let nuevas = nuevas.corregidas();
+            crate::avisos::guardar_reglas(&bloquear(&estado.base), &nuevas)?;
+            *bloquear(&estado.reglas) = nuevas.clone();
+            Respuesta::json(&nuevas)
+        }
         ("POST", "/api/avisos/vistos") => {
             let n = crate::avisos::marcar_vistos(&bloquear(&estado.base))?;
             Respuesta::json(&serde_json::json!({ "marcados": n }))

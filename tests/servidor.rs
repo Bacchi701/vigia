@@ -250,6 +250,12 @@ fn inicio_conexiones_y_avisos_por_la_api() {
             .ends_with(".exe")
     );
 
+    // Por omisión solo avisan los puertos accesibles desde la red; esta
+    // prueba abre puertos en 127.0.0.1, así que activa también los locales.
+    let mut r = p.json("/api/reglas");
+    r["puerto_solo_red"] = serde_json::json!(false);
+    let g = pedir(puerto, "POST", "/api/reglas", &t, &r.to_string()).unwrap();
+    assert_eq!(g.estado, 200);
     // Revisión forzada: la primera solo guarda la referencia.
     let r = pedir(puerto, "POST", "/api/revisar", &t, "").unwrap();
     assert_eq!(r.estado, 200, "{}", r.cuerpo);
@@ -261,7 +267,7 @@ fn inicio_conexiones_y_avisos_por_la_api() {
     let a = p.json("/api/avisos");
     let lista = a["avisos"].as_array().unwrap();
     assert!(
-        lista.iter().any(|x| x["tipo"] == "puerto_nuevo"
+        lista.iter().any(|x| x["tipo"] == "puerto_nuevo_local"
             && x["titulo"].as_str().unwrap().contains(&nuevo.to_string())),
         "{a}"
     );
@@ -304,4 +310,60 @@ fn un_cliente_sin_token_que_no_envia_el_cuerpo_no_bloquea() {
     assert_eq!(p.get("/api/estado").estado, 200);
     assert!(inicio.elapsed() < Duration::from_secs(5));
     drop(lento);
+}
+
+#[test]
+fn reglas_por_la_api_y_aviso_real_de_disco() {
+    let p = Prueba::nueva();
+    let puerto = p.app().puerto();
+    let token = p.app().token().to_string();
+    let t = [("X-Vigia-Token", token.as_str())];
+
+    let mut r = p.json("/api/reglas");
+    assert_eq!(r["memoria_pct"], 90.0);
+
+    // Cuerpo inválido → 400.
+    let malo = pedir(puerto, "POST", "/api/reglas", &t, "no es json").unwrap();
+    assert_eq!(malo.estado, 400);
+
+    // Valores fuera de rango se corrigen; desactivar avisos de puertos.
+    r["memoria_pct"] = serde_json::json!(500);
+    r["puerto_activa"] = serde_json::json!(false);
+    // Umbral de disco al 99 %: cualquier unidad con menos de 99 % libre avisa.
+    r["disco_pct"] = serde_json::json!(99);
+    let g = pedir(puerto, "POST", "/api/reglas", &t, &r.to_string()).unwrap();
+    assert_eq!(g.estado, 200, "{}", g.cuerpo);
+    let guardadas = p.json("/api/reglas");
+    assert_eq!(guardadas["memoria_pct"], 100.0);
+    assert_eq!(guardadas["puerto_activa"], false);
+
+    // Con datos reales, el motor avisa de poco espacio en alguna unidad.
+    let limite = Instant::now() + Duration::from_secs(10);
+    loop {
+        let a = p.json("/api/avisos");
+        if a["avisos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["tipo"] == "disco_poco")
+        {
+            break;
+        }
+        assert!(Instant::now() < limite, "no llegó el aviso de disco");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    // Con la regla de puertos desactivada, un puerto nuevo no avisa.
+    pedir(puerto, "POST", "/api/revisar", &t, "").unwrap();
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    pedir(puerto, "POST", "/api/revisar", &t, "").unwrap();
+    let a = p.json("/api/avisos");
+    assert!(
+        !a["avisos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["tipo"].as_str().unwrap().starts_with("puerto_nuevo"))
+    );
+    drop(l);
 }

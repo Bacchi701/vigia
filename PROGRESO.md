@@ -12,7 +12,7 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 | H3 Interfaz | terminado; revisión aplicada 2026-11-24T05:55:38.6190022-03:00 (ver REVISION_H3.md) | 2026-11-24T05:28:45.3947719-03:00 |
 | H4 Disco | terminado | 2026-11-24T05:35:34.5801355-03:00 |
 | H5 Inicio y conexiones | terminado | 2026-11-24T05:42:52.4085010-03:00 |
-| H6 Avisos | pendiente | |
+| H6 Avisos | terminado | 2026-11-24T06:00:47.7465406-03:00 |
 | H7 Entrega | pendiente | |
 | Extra 1 Resumen semanal | pendiente | |
 | Extra 2 Exportar CSV | pendiente | |
@@ -69,8 +69,19 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 - Prueba manual (release): vistas Inicio, Conexiones y Avisos con datos reales. Se corrigió un error encontrado ahí: un puerto en la IP de una interfaz (no 0.0.0.0) aparecía como «solo este equipo».
 - `cargo clippy --all-targets -- -D warnings` sin avisos.
 
+### Revisión de H3 (subagente)
+- Se aplicaron 7 correcciones del backend, 8 de la interfaz y 5 de solidez del `unsafe` (detalle en `REVISION_H3.md`). Pruebas nuevas: archivo que realmente se achica, minuto repetido que se combina, reloj que retrocede, análisis de disco que no borran historial, dos arranques simultáneos, parámetros extremos y cliente lento sin token. 57 pruebas pasan tras la revisión.
+- Verificado en el navegador: fila agrupada abre el detalle, gráficos del detalle sin parpadeo, clic en el historial de 30 días, franja «Sin conexión» al detener Vigía.
+
+### H6
+- `cargo test`: 60 pruebas pasan (40 unitarias + 2 arranque + 4 colector + 3 disco + 2 historial + 9 servidor).
+  - Con datos simulados: memoria al 95 % avisa solo después de 5 min seguidos (una baja reinicia la cuenta) y una sola vez; un proceso al 80 % avisa una vez en 30 min y nada si la regla está desactivada; poco disco avisa, no repite en 1 h y sí a las 7 h; reglas fuera de rango se corrigen.
+  - Por la API: leer y guardar reglas, cuerpo inválido → 400; con umbral de disco al 99 % llega un aviso real `disco_poco`; con la regla de puertos desactivada no hay aviso de puerto nuevo.
+- Prueba manual (release): formulario de reglas guardado desde la interfaz. Se agregó la opción «solo puertos accesibles desde otros equipos» porque aparecieron 29 avisos de puertos locales de herramientas de desarrollo.
+- `cargo clippy --all-targets -- -D warnings` sin avisos.
+
 ## Qué sigue
-H6 Avisos.
+H7 Entrega.
 
 ## Problemas abiertos
 Ninguno.
