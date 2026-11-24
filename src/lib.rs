@@ -9,8 +9,11 @@
 #![deny(unsafe_code)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod app;
 pub mod base;
+pub mod cliente;
 pub mod colector;
 pub mod error;
 pub mod historial;
+pub mod servidor;
 pub mod win;

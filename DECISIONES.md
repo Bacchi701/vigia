@@ -40,3 +40,17 @@ No se usa `sysinfo` ni crates parecidos: las llamadas a Windows están escritas 
 - **WAL** (`journal_mode=WAL`) · modo por defecto · la interfaz puede leer mientras el colector escribe.
 - **Hora como parámetro en todo el historial** · un trait `Reloj` · las pruebas simulan horas de datos con solo pasar números (reloj simulado), sin trait extra.
 - **Pruebas que escriben en disco usan `CARGO_TARGET_TMPDIR`** (dentro de `target/`) y borran solo sus archivos concretos · carpeta temporal del sistema · la regla es escribir solo dentro de la carpeta del proyecto.
+
+## H3 · Interfaz y servidor
+
+- **Token en la URL después de `#`** (`/#token=...`), guardado en `sessionStorage` y enviado en el encabezado `X-Vigia-Token` · cookie · el fragmento `#` nunca viaja al servidor ni queda en registros, y un encabezado propio no lo envía el navegador solo (protege contra CSRF). La página lo quita de la barra de direcciones al cargarse.
+- **La página `/` se sirve sin token** (solo con `Host` válido) · exigir token también · la página no contiene datos; todos los datos van por `/api/...`, que sí lo exige.
+- **`Content-Security-Policy: default-src 'none'`** con scripts y estilos en línea · archivos JS/CSS separados · el requisito es una sola página; la política impide cargar cualquier recurso externo.
+- **Puerto fijo 47613, con respaldo a uno libre** · siempre aleatorio · un puerto estable facilita marcadores; si está ocupado se usa otro.
+- **Una sola instancia**: `datos/vigia_estado.json` guarda puerto, token y PID; un segundo arranque abre la página de la instancia existente · permitir varias · evita dos colectores escribiendo la misma base.
+- **`detener_vigia.bat` → `vigia --detener`**, que llama a `POST /api/apagar` con el token · `taskkill` · se cierra solo la instancia propia y de forma ordenada (guarda el último minuto). Cerrar la ventana de consola también guarda (vía `SetConsoleCtrlHandler`).
+- **Ventana de consola minimizada** (`start /min`) · ejecutable sin consola (`windows_subsystem`) · más simple y deja ver mensajes de error; cerrarla cierra Vigía.
+- **Opción `--datos CARPETA`** · solo carpeta fija · permite probar el arranque real sin tocar los datos del usuario.
+- **Gráficos dibujados a mano en `<canvas>`** · biblioteca de gráficos · sin dependencias ni CDN, como pide el proyecto.
+- **Modo oscuro**: sigue al sistema la primera vez y luego recuerda la elección en `localStorage`.
+- **Tabla de procesos completa cada 2 s** (sin paginación) · paginar · ~370 filas se pintan en milisegundos; la actualización se pausa si la pestaña no está visible.

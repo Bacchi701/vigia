@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vigía</title>
+<style>
+/* ---------- Colores: claro y oscuro ---------- */
+:root {
+  --fondo: #eef1f5; --panel: #ffffff; --panel-2: #f6f8fb; --texto: #172033; --suave: #5a6478;
+  --borde: #d9dee7; --acento: #1d5fd6; --acento-suave: #dce7fb; --sobre-acento: #ffffff;
+  --ok: #15803d; --alerta: #b45309; --peligro: #b91c1c;
+  --cpu: #1d5fd6; --mem: #8b3fd9; --rx: #0e8fa8; --tx: #e0590b; --io: #3f8f3a;
+  --sombra: 0 1px 2px rgba(16, 24, 40, .06);
+  color-scheme: light;
+}
+:root[data-tema="oscuro"] {
+  --fondo: #0d1016; --panel: #151a23; --panel-2: #1b2130; --texto: #e5e9f0; --suave: #97a1b4;
+  --borde: #273042; --acento: #5b9cff; --acento-suave: #1c2d4d; --sobre-acento: #0d1016;
+  --ok: #4ade80; --alerta: #fbbf24; --peligro: #f87171;
+  --cpu: #5b9cff; --mem: #c084fc; --rx: #22d3ee; --tx: #fb923c; --io: #86efac;
+  --sombra: none;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--fondo); color: var(--texto);
+  font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+button, input, select { font: inherit; color: inherit; }
+button {
+  background: var(--panel); border: 1px solid var(--borde); border-radius: 6px;
+  padding: 5px 12px; cursor: pointer;
+}
+button:hover { border-color: var(--acento); }
+button.activo { background: var(--acento); color: var(--sobre-acento); border-color: var(--acento); }
+button:focus-visible, input:focus-visible, select:focus-visible, tr:focus-visible {
+  outline: 2px solid var(--acento); outline-offset: 1px;
+}
+input, select {
+  background: var(--panel); border: 1px solid var(--borde); border-radius: 6px; padding: 5px 8px;
+}
+h1, h2, h3 { font-weight: 600; margin: 0; }
+h2 { font-size: 17px; }
+h3 { font-size: 14px; }
+
+/* ---------- Estructura ---------- */
+header {
+  display: flex; align-items: center; gap: 18px; padding: 10px 20px;
+  background: var(--panel); border-bottom: 1px solid var(--borde); position: sticky; top: 0; z-index: 5;
+}
+header h1 { font-size: 18px; letter-spacing: .2px; }
+header h1 span { color: var(--acento); }
+nav { display: flex; gap: 6px; flex-wrap: wrap; }
+nav button { border-color: transparent; background: transparent; }
+nav button.activo { background: var(--acento-suave); color: var(--texto); border-color: transparent; font-weight: 600; }
+.espacio { flex: 1; }
+#estado-propio { color: var(--suave); font-size: 12.5px; text-align: right; }
+main { padding: 18px 20px 40px; max-width: 1500px; margin: 0 auto; }
+section[data-vista] { display: none; }
+section[data-vista].visible { display: block; }
+.fila { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.fila.entre { justify-content: space-between; }
+.panel {
+  background: var(--panel); border: 1px solid var(--borde); border-radius: 8px;
+  padding: 14px 16px; box-shadow: var(--sombra);
+}
+.bloque { margin-top: 14px; }
+.suave { color: var(--suave); }
+.chico { font-size: 12.5px; }
+.aviso-token {
+  display: none; margin: 30px auto; max-width: 560px; text-align: center;
+}
+
+/* ---------- Tarjetas de la vista Ahora ---------- */
+.tarjetas { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.tarjeta .titulo { color: var(--suave); font-size: 12.5px; }
+.tarjeta .valor { font-size: 24px; font-weight: 600; margin: 2px 0 6px; }
+.tarjeta canvas { width: 100%; height: 54px; display: block; }
+.unidades { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 22px; }
+.barra { height: 8px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 4px; overflow: hidden; }
+.barra > div { height: 100%; background: var(--acento); }
+.barra.alta > div { background: var(--peligro); }
+
+/* ---------- Tablas ---------- */
+.tabla-caja { overflow: auto; max-height: calc(100vh - 210px); border: 1px solid var(--borde); border-radius: 8px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--borde); white-space: nowrap; }
+th { position: sticky; top: 0; background: var(--panel-2); font-weight: 600; font-size: 12.5px; color: var(--suave); z-index: 1; }
+th[data-col] { cursor: pointer; user-select: none; }
+th[data-col]:hover { color: var(--texto); }
+th .flecha { color: var(--acento); }
+td.num, th.num { text-align: right; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--panel-2); }
+tbody tr.elegido { background: var(--acento-suave); }
+.nombre-app { font-weight: 600; }
+.nombre-app small { font-weight: 400; color: var(--suave); margin-left: 6px; }
+.recorte { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+.celda-barra { position: relative; min-width: 90px; }
+.celda-barra .relleno { position: absolute; left: 0; top: 4px; bottom: 4px; background: var(--acento-suave); border-radius: 3px; }
+.celda-barra span { position: relative; }
+.etiqueta { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; border: 1px solid var(--borde); color: var(--suave); }
+.etiqueta.nueva { color: var(--alerta); border-color: var(--alerta); }
+
+/* ---------- Panel de detalle ---------- */
+#detalle {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 100vw);
+  background: var(--panel); border-left: 1px solid var(--borde); box-shadow: -8px 0 24px rgba(0,0,0,.12);
+  padding: 18px 20px; overflow: auto; transform: translateX(105%); transition: transform .18s ease; z-index: 10;
+}
+#detalle.abierto { transform: none; }
+#detalle dl { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; margin: 14px 0; }
+#detalle dt { color: var(--suave); }
+#detalle dd { margin: 0; word-break: break-all; }
+#detalle canvas { width: 100%; height: 90px; display: block; }
+.explicacion { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 6px; padding: 10px 12px; }
+
+/* ---------- Historial ---------- */
+#grafico-historial { width: 100%; height: 260px; display: block; cursor: crosshair; }
+.leyenda { display: flex; gap: 16px; font-size: 12.5px; color: var(--suave); }
+.leyenda i { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 6px; }
+.dos-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .dos-col { grid-template-columns: 1fr; } header { flex-wrap: wrap; } }
+.vacio { padding: 26px; text-align: center; color: var(--suave); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vig<span>í</span>a</h1>
+  <nav id="nav"></nav>
+  <div class="espacio"></div>
+  <div id="estado-propio"></div>
+  <button id="boton-tema" title="Cambiar entre modo claro y oscuro">Modo oscuro</button>
+</header>
+
+<div id="aviso-token" class="panel aviso-token">
+  <h2>Falta la llave de acceso</h2>
+  <p class="suave">Por seguridad, Vigía solo responde a la ventana que abrió al iniciarse.
+  Cierra esta pestaña y abre Vigía con <b>iniciar_vigia.bat</b>.</p>
+</div>
+
+<main id="principal">
+  <!-- ===================== AHORA ===================== -->
+  <section data-vista="ahora">
+    <div class="tarjetas">
+      <div class="panel tarjeta"><div class="titulo">Procesador (CPU)</div><div class="valor" id="v-cpu">–</div><canvas id="g-cpu"></canvas></div>
+      <div class="panel tarjeta"><div class="titulo">Memoria en uso</div><div class="valor" id="v-mem">–</div><canvas id="g-mem"></canvas></div>
+      <div class="panel tarjeta"><div class="titulo">Red: bajada / subida</div><div class="valor" id="v-red">–</div><canvas id="g-red"></canvas></div>
+      <div class="panel tarjeta"><div class="titulo">Lectura y escritura de procesos</div><div class="valor" id="v-io">–</div><canvas id="g-io"></canvas></div>
+    </div>
+    <div class="panel bloque">
+      <div class="fila entre"><h3>Unidades</h3><span class="suave chico" id="adaptadores"></span></div>
+      <div class="unidades bloque" id="unidades"></div>
+    </div>
+    <div class="fila entre bloque">
+      <div class="fila">
+        <input id="filtro" type="search" placeholder="Filtrar por nombre, empresa, ruta o PID" size="40" aria-label="Filtrar procesos">
+        <label class="fila chico" style="gap:6px"><input type="checkbox" id="agrupar"> Agrupar por aplicación</label>
+      </div>
+      <span class="suave chico" id="resumen-procesos"></span>
+    </div>
+    <div class="tabla-caja bloque">
+      <table id="tabla-procesos">
+        <thead><tr>
+          <th data-col="nombre">Nombre</th>
+          <th data-col="pid" class="num">PID</th>
+          <th data-col="cpu" class="num">CPU</th>
+          <th data-col="memoria" class="num">Memoria</th>
+          <th data-col="io" class="num">E/S</th>
+          <th data-col="inicio_ms">Inicio</th>
+          <th data-col="empresa">Empresa</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== HISTORIAL ===================== -->
+  <section data-vista="historial">
+    <div class="fila entre">
+      <div class="fila" id="rangos-historial"></div>
+      <label class="fila chico" style="gap:6px">Ir a un momento:
+        <input type="datetime-local" id="momento-elegido"></label>
+    </div>
+    <div class="panel bloque">
+      <div class="fila entre">
+        <div class="leyenda">
+          <span><i style="background:var(--cpu)"></i>CPU promedio</span>
+          <span><i style="background:var(--cpu);opacity:.35;height:8px"></i>CPU máxima</span>
+          <span><i style="background:var(--mem)"></i>Memoria</span>
+        </div>
+        <span class="suave chico">Haz clic en el gráfico para ver qué consumía más en ese momento.</span>
+      </div>
+      <canvas id="grafico-historial" class="bloque"></canvas>
+    </div>
+    <div class="panel bloque" id="momento"><div class="vacio">Elige un momento en el gráfico.</div></div>
+  </section>
+
+  <!-- ===================== APLICACIONES ===================== -->
+  <section data-vista="aplicaciones">
+    <div class="fila entre">
+      <div class="fila" id="periodos-apps"></div>
+      <label class="fila chico" style="gap:6px">Ordenar por
+        <select id="orden-apps">
+          <option value="cpu">CPU</option><option value="memoria">Memoria</option><option value="io">Lectura y escritura</option>
+        </select></label>
+    </div>
+    <p class="suave chico">Uso por aplicación: todos los procesos con el mismo nombre de ejecutable suman como uno.
+      «Promedio» cuenta todo el período, incluso cuando la aplicación estaba cerrada.</p>
+    <div class="tabla-caja"><table id="tabla-apps"><thead><tr>
+      <th>Aplicación</th><th class="num">CPU promedio</th><th class="num">CPU máxima</th>
+      <th class="num">Memoria promedio</th><th class="num">Memoria máxima</th><th class="num">Lectura y escritura</th><th class="num">Tiempo activa</th>
+    </tr></thead><tbody></tbody></table></div>
+  </section>
+</main>
+
+<aside id="detalle" aria-label="Detalle del proceso">
+  <div class="fila entre"><h2>¿Qué es esto?</h2><button id="cerrar-detalle">Cerrar</button></div>
+  <div id="detalle-cuerpo"></div>
+</aside>
+
+<script>
+"use strict";
+// =====================================================================
+// Utilidades
+// =====================================================================
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const nf1 = new Intl.NumberFormat("es", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+const nf0 = new Intl.NumberFormat("es", { maximumFractionDigits: 0 });
+function bytes(b) {
+  if (b == null) return "–";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, v = Number(b);
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return (i < 2 ? nf0.format(v) : nf1.format(v)) + " " + u[i];
+}
+const porSeg = (b) => bytes(b) + "/s";
+const pct = (v) => (v == null ? "–" : nf1.format(v) + " %");
+function hora(ms, conFecha) {
+  if (!ms) return "–";
+  const d = new Date(ms), hoy = new Date();
+  const h = d.toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" });
+  if (!conFecha && d.toDateString() === hoy.toDateString()) return h;
+  return d.toLocaleDateString("es", { day: "2-digit", month: "2-digit" }) + " " + h;
+}
+function duracion(ms) {
+  const m = Math.floor(ms / 60000);
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + " h " + (m % 60) + " min";
+  return Math.floor(h / 24) + " días " + (h % 24) + " h";
+}
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// =====================================================================
+// Token y llamadas a la API
+// =====================================================================
+(function leerToken() {
+  const m = location.hash.match(/token=([0-9a-f]+)/);
+  if (m) {
+    sessionStorage.setItem("vigia-token", m[1]);
+    history.replaceState(null, "", location.pathname); // quita el token de la barra
+  }
+})();
+const TOKEN = sessionStorage.getItem("vigia-token") || "";
+let sinToken = false;
+async function api(ruta, opciones = {}) {
+  const r = await fetch(ruta, { ...opciones, headers: { "X-Vigia-Token": TOKEN, ...(opciones.headers || {}) } });
+  if (r.status === 401) { mostrarSinToken(); throw new Error("sin token"); }
+  const datos = await r.json();
+  if (!r.ok) throw new Error(datos.error || r.statusText);
+  return datos;
+}
+function mostrarSinToken() {
+  if (sinToken) return;
+  sinToken = true;
+  $("#principal").style.display = "none";
+  $("#aviso-token").style.display = "block";
+}
+
+// =====================================================================
+// Tema claro / oscuro
+// =====================================================================
+function aplicarTema(t) {
+  document.documentElement.dataset.tema = t;
+  $("#boton-tema").textContent = t === "oscuro" ? "Modo claro" : "Modo oscuro";
+  localStorage.setItem("vigia-tema", t);
+  redibujarTodo();
+}
+$("#boton-tema").onclick = () => aplicarTema(document.documentElement.dataset.tema === "oscuro" ? "claro" : "oscuro");
+
+// =====================================================================
+// Navegación entre vistas
+// =====================================================================
+const VISTAS = [
+  ["ahora", "Ahora"], ["historial", "Historial"], ["aplicaciones", "Aplicaciones"],
+];
+let vista = "ahora";
+function irA(v) {
+  vista = v;
+  $$("section[data-vista]").forEach((s) => s.classList.toggle("visible", s.dataset.vista === v));
+  $$("#nav button").forEach((b) => b.classList.toggle("activo", b.dataset.v === v));
+  location.replace("#" + v);
+  const al = AL_ENTRAR[v];
+  if (al) al();
+}
+const AL_ENTRAR = {};
+function armarNav() {
+  $("#nav").innerHTML = VISTAS.filter(([v]) => $(`section[data-vista="${v}"]`))
+    .map(([v, t]) => `<button data-v="${v}">${t}</button>`).join("");
+  $$("#nav button").forEach((b) => (b.onclick = () => irA(b.dataset.v)));
+}
+
+// =====================================================================
+// Gráficos (canvas, dibujados a mano)
+// =====================================================================
+// Prepara un canvas para la densidad de píxeles de la pantalla.
+function lienzo(canvas) {
+  const r = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(r.width * dpr));
+  canvas.height = Math.max(1, Math.round(r.height * dpr));
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: r.width, h: r.height };
+}
+// Mini gráfico de línea para las tarjetas. series: [{valores, color}]
+function miniGrafico(canvas, series, max) {
+  const { ctx, w, h } = lienzo(canvas);
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = css("--borde"); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, h - .5); ctx.lineTo(w, h - .5); ctx.stroke();
+  for (const s of series) {
+    const n = s.valores.length;
+    if (n < 2) continue;
+    const tope = max || Math.max(1, ...s.valores, ...(series.flatMap((x) => x.valores)));
+    ctx.beginPath();
+    s.valores.forEach((v, i) => {
+      const x = (i / (n - 1)) * w, y = h - 2 - (v / tope) * (h - 6);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.strokeStyle = css(s.color); ctx.lineWidth = 1.6; ctx.stroke();
+    if (s.area) {
+      ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+      ctx.globalAlpha = .12; ctx.fillStyle = css(s.color); ctx.fill(); ctx.globalAlpha = 1;
+    }
+  }
+}
+
+// =====================================================================
+// Vista AHORA
+// =====================================================================
+let ultima = null, vivo = [], pidVigia = 0;
+let orden = { col: "cpu", desc: true };
+let elegido = null; // {pid, inicio}
+async function actualizarAhora() {
+  try {
+    const d = await api("/api/ahora");
+    if (!d.muestra) return;
+    ultima = d.muestra; vivo = d.vivo;
+    pintarAhora();
+    if (elegido) pintarDetalle();
+  } catch (e) { console.warn(e); }
+}
+function pintarAhora() {
+  const s = ultima.sistema;
+  $("#v-cpu").textContent = pct(s.cpu);
+  $("#v-mem").textContent = `${bytes(s.mem_usada)} de ${bytes(s.mem_total)}`;
+  $("#v-red").textContent = `${porSeg(s.red_rx_bps)} / ${porSeg(s.red_tx_bps)}`;
+  const io = vivo.length ? vivo[vivo.length - 1].io_bps : 0;
+  $("#v-io").textContent = porSeg(io);
+  miniGrafico($("#g-cpu"), [{ valores: vivo.map((p) => p.cpu), color: "--cpu", area: true }], 100);
+  miniGrafico($("#g-mem"), [{ valores: vivo.map((p) => (p.mem_usada / p.mem_total) * 100), color: "--mem", area: true }], 100);
+  miniGrafico($("#g-red"), [{ valores: vivo.map((p) => p.red_rx_bps), color: "--rx" }, { valores: vivo.map((p) => p.red_tx_bps), color: "--tx" }]);
+  miniGrafico($("#g-io"), [{ valores: vivo.map((p) => p.io_bps), color: "--io", area: true }]);
+
+  $("#unidades").innerHTML = ultima.unidades.map((u) => {
+    const usado = u.total - u.libre, p = u.total ? (usado / u.total) * 100 : 0;
+    return `<div><div class="fila entre"><span><b>${esc(u.raiz)}</b> ${esc(u.etiqueta)} <span class="suave chico">${esc(u.tipo)}</span></span>
+      <span class="suave chico">${bytes(u.libre)} libres de ${bytes(u.total)}</span></div>
+      <div class="barra ${p > 90 ? "alta" : ""}"><div style="width:${p.toFixed(1)}%"></div></div></div>`;
+  }).join("") || `<span class="suave">Sin unidades.</span>`;
+  $("#adaptadores").textContent = ultima.adaptadores.filter((a) => a.conectado)
+    .map((a) => `${a.nombre}: ↓ ${porSeg(a.rx_bps)} ↑ ${porSeg(a.tx_bps)}`).join(" · ");
+
+  const yo = ultima.procesos.find((p) => p.pid === pidVigia);
+  if (yo) $("#estado-propio").innerHTML = `Vigía usa ${pct(yo.cpu)} de CPU y ${bytes(yo.memoria)}<br>Última muestra ${hora(ultima.ts)}`;
+  pintarTablaProcesos();
+}
+// Filas de la tabla: procesos sueltos o agrupados por aplicación.
+function filasProcesos() {
+  const f = $("#filtro").value.trim().toLowerCase();
+  let filas = ultima.procesos.map((p) => ({ ...p, io: p.io_lectura_bps + p.io_escritura_bps, n: 1 }));
+  if ($("#agrupar").checked) {
+    const g = new Map();
+    for (const p of filas) {
+      const k = p.nombre.toLowerCase();
+      const a = g.get(k);
+      if (!a) g.set(k, { ...p });
+      else {
+        a.cpu += p.cpu; a.memoria += p.memoria; a.io += p.io; a.n += 1;
+        a.inicio_ms = Math.min(a.inicio_ms || Infinity, p.inicio_ms || Infinity);
+      }
+    }
+    filas = Array.from(g.values());
+  }
+  if (f) filas = filas.filter((p) => [p.nombre, p.descripcion, p.empresa, p.ruta, String(p.pid)].some((x) => (x || "").toLowerCase().includes(f)));
+  const { col, desc } = orden;
+  filas.sort((a, b) => {
+    let x = a[col], y = b[col];
+    if (typeof x === "string" || typeof y === "string") { x = (x || "").toLowerCase(); y = (y || "").toLowerCase(); }
+    x = x ?? -1; y = y ?? -1;
+    return (x < y ? -1 : x > y ? 1 : 0) * (desc ? -1 : 1);
+  });
+  return filas;
+}
+function pintarTablaProcesos() {
+  const filas = filasProcesos();
+  const agrupado = $("#agrupar").checked;
+  $$("#tabla-procesos th[data-col]").forEach((th) => {
+    th.querySelector(".flecha")?.remove();
+    if (th.dataset.col === orden.col) th.insertAdjacentHTML("beforeend", ` <span class="flecha">${orden.desc ? "▼" : "▲"}</span>`);
+  });
+  $("#resumen-procesos").textContent = `${filas.length} ${agrupado ? "aplicaciones" : "procesos"} · ${ultima.sistema.n_cpu} procesadores lógicos`;
+  $("#tabla-procesos tbody").innerHTML = filas.map((p) => {
+    const sel = elegido && elegido.pid === p.pid && elegido.inicio === (p.inicio_ms || 0) ? "elegido" : "";
+    const nombre = p.descripcion && p.descripcion.toLowerCase() !== p.nombre.toLowerCase()
+      ? `${esc(p.nombre)}<small>${esc(p.descripcion)}</small>` : esc(p.nombre);
+    return `<tr class="${sel}" tabindex="0" data-pid="${p.pid}" data-inicio="${p.inicio_ms || 0}">
+      <td class="nombre-app recorte">${nombre}${agrupado && p.n > 1 ? ` <span class="etiqueta">${p.n}</span>` : ""}</td>
+      <td class="num">${agrupado && p.n > 1 ? "–" : p.pid}</td>
+      <td class="num">${pct(p.cpu)}</td>
+      <td class="num">${bytes(p.memoria)}</td>
+      <td class="num">${p.io > 0 ? porSeg(p.io) : "–"}</td>
+      <td>${hora(p.inicio_ms)}</td>
+      <td class="recorte">${esc(p.empresa || "")}</td></tr>`;
+  }).join("");
+}
+$$("#tabla-procesos th[data-col]").forEach((th) => (th.onclick = () => {
+  const c = th.dataset.col;
+  orden = { col: c, desc: orden.col === c ? !orden.desc : !["nombre", "empresa"].includes(c) };
+  pintarTablaProcesos();
+}));
+$("#filtro").oninput = () => ultima && pintarTablaProcesos();
+$("#agrupar").onchange = () => ultima && pintarTablaProcesos();
+function abrirDesdeFila(tr) {
+  elegido = { pid: Number(tr.dataset.pid), inicio: Number(tr.dataset.inicio) };
+  pintarTablaProcesos();
+  pintarDetalle();
+  $("#detalle").classList.add("abierto");
+}
+$("#tabla-procesos tbody").addEventListener("click", (e) => { const tr = e.target.closest("tr"); if (tr) abrirDesdeFila(tr); });
+$("#tabla-procesos tbody").addEventListener("keydown", (e) => { if (e.key === "Enter") { const tr = e.target.closest("tr"); if (tr) abrirDesdeFila(tr); } });
+
+// ---------- Panel «¿Qué es esto?» ----------
+function cerrarDetalle() { elegido = null; $("#detalle").classList.remove("abierto"); if (ultima) pintarTablaProcesos(); }
+$("#cerrar-detalle").onclick = cerrarDetalle;
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") cerrarDetalle(); });
+async function pintarDetalle() {
+  if (!elegido || !ultima) return;
+  const p = ultima.procesos.find((x) => x.pid === elegido.pid && (x.inicio_ms || 0) === elegido.inicio);
+  const cuerpo = $("#detalle-cuerpo");
+  if (!p) { cuerpo.innerHTML = `<p class="suave">Este proceso ya terminó.</p>`; return; }
+  const padre = ultima.procesos.find((x) => x.pid === p.ppid);
+  let explicacion = "";
+  if (p.acceso_limitado) explicacion = `<p class="explicacion chico">Windows no deja leer la ruta de este proceso sin permisos de administrador. Suele tratarse de un componente protegido del sistema.</p>`;
+  else if (!p.empresa) explicacion = `<p class="explicacion chico">El ejecutable no declara empresa ni descripción. No es necesariamente malo (muchas herramientas de desarrollo no lo hacen), pero si no lo reconoces, revisa la ruta.</p>`;
+  cuerpo.innerHTML = `
+    <h3 class="bloque">${esc(p.descripcion || p.nombre)}</h3>
+    <dl>
+      <dt>Ejecutable</dt><dd>${esc(p.nombre)}</dd>
+      <dt>Empresa</dt><dd>${esc(p.empresa || "No declarada")}</dd>
+      <dt>Descripción</dt><dd>${esc(p.descripcion || "No declarada")}</dd>
+      <dt>Ruta</dt><dd>${esc(p.ruta || "No disponible")}</dd>
+      <dt>PID</dt><dd>${p.pid}</dd>
+      <dt>Iniciado por</dt><dd>${padre ? `${esc(padre.nombre)} (PID ${padre.pid})` : `PID ${p.ppid} (ya terminó)`}</dd>
+      <dt>Hora de inicio</dt><dd>${p.inicio_ms ? `${new Date(p.inicio_ms).toLocaleString("es")} (hace ${duracion(ultima.ts - p.inicio_ms)})` : "–"}</dd>
+      <dt>CPU</dt><dd>${pct(p.cpu)}</dd>
+      <dt>Memoria</dt><dd>${bytes(p.memoria)} privada en RAM · ${bytes(p.memoria_fisica)} en RAM incluida la compartida · ${bytes(p.memoria_comprometida)} comprometida</dd>
+      <dt>Lectura / escritura</dt><dd>${porSeg(p.io_lectura_bps)} / ${porSeg(p.io_escritura_bps)} · total ${bytes(p.io_lectura_total)} / ${bytes(p.io_escritura_total)}</dd>
+      <dt>Hilos · manijas</dt><dd>${p.hilos} · ${p.manijas}</dd>
+    </dl>
+    ${explicacion}
+    <h3 class="bloque">Últimos minutos</h3>
+    <div class="leyenda bloque"><span><i style="background:var(--cpu)"></i>CPU</span><span><i style="background:var(--mem)"></i>Memoria</span></div>
+    <canvas id="g-detalle-cpu" class="bloque"></canvas>
+    <canvas id="g-detalle-mem" class="bloque"></canvas>`;
+  try {
+    const d = await api(`/api/proceso?pid=${p.pid}&inicio=${p.inicio_ms || 0}`);
+    const c1 = $("#g-detalle-cpu"), c2 = $("#g-detalle-mem");
+    if (c1) miniGrafico(c1, [{ valores: d.serie.map((x) => x.cpu), color: "--cpu", area: true }]);
+    if (c2) miniGrafico(c2, [{ valores: d.serie.map((x) => x.memoria), color: "--mem", area: true }]);
+  } catch (e) { console.warn(e); }
+}
+
+// =====================================================================
+// Vista HISTORIAL
+// =====================================================================
+const RANGOS = [["1 h", 1], ["6 h", 6], ["24 h", 24], ["7 días", 168], ["30 días", 720]];
+let rangoHoras = 6, linea = [], momentoTs = null, cursorTs = null, rangoActual = { desde: 0, hasta: 0 };
+function armarRangos() {
+  $("#rangos-historial").innerHTML = RANGOS.map(([t, h]) => `<button data-h="${h}">${t}</button>`).join("");
+  $$("#rangos-historial button").forEach((b) => (b.onclick = () => { rangoHoras = Number(b.dataset.h); cargarHistorial(); }));
+}
+async function cargarHistorial(centro) {
+  $$("#rangos-historial button").forEach((b) => b.classList.toggle("activo", Number(b.dataset.h) === rangoHoras));
+  const ancho = rangoHoras * 3600000;
+  let hasta = Date.now();
+  if (centro) hasta = Math.min(Date.now(), centro + ancho / 2);
+  const desde = hasta - ancho;
+  rangoActual = { desde, hasta };
+  try {
+    linea = await api(`/api/historial/linea?desde=${desde}&hasta=${hasta}&puntos=400`);
+  } catch (e) { linea = []; }
+  dibujarHistorial();
+}
+function dibujarHistorial() {
+  const canvas = $("#grafico-historial");
+  if (!canvas.offsetParent) return;
+  const { ctx, w, h } = lienzo(canvas);
+  const m = { izq: 44, der: 12, arr: 10, aba: 24 };
+  const W = w - m.izq - m.der, H = h - m.arr - m.aba;
+  const { desde, hasta } = rangoActual;
+  const x = (ts) => m.izq + ((ts - desde) / (hasta - desde)) * W;
+  const y = (v) => m.arr + H - (v / 100) * H;
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = "11px Segoe UI, system-ui, sans-serif"; ctx.fillStyle = css("--suave"); ctx.strokeStyle = css("--borde"); ctx.lineWidth = 1;
+  for (const v of [0, 25, 50, 75, 100]) {
+    ctx.beginPath(); ctx.moveTo(m.izq, Math.round(y(v)) + .5); ctx.lineTo(w - m.der, Math.round(y(v)) + .5); ctx.stroke();
+    ctx.fillText(v + " %", 6, y(v) + 4);
+  }
+  const marcas = 6;
+  for (let i = 0; i <= marcas; i++) {
+    const ts = desde + ((hasta - desde) * i) / marcas;
+    const t = hora(ts, rangoHoras > 24);
+    ctx.fillText(t, Math.min(w - m.der - ctx.measureText(t).width, Math.max(m.izq, x(ts) - ctx.measureText(t).width / 2)), h - 6);
+  }
+  if (!linea.length) {
+    ctx.fillText("Aún no hay datos guardados en este rango. Vigía guarda un resumen por minuto mientras está abierto.", m.izq + 10, m.arr + 24);
+    return;
+  }
+  // Los huecos (más de 3 pasos sin datos) cortan la línea: Vigía estaba cerrado.
+  const paso = linea.length > 1 ? Math.min(...linea.slice(1).map((p, i) => p.ts - linea[i].ts)) : 60000;
+  const trazar = (val, color, ancho, area) => {
+    ctx.beginPath();
+    let previo = null;
+    for (const p of linea) {
+      const px = x(p.ts), py = y(val(p));
+      if (previo === null || p.ts - previo > paso * 3) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      previo = p.ts;
+    }
+    ctx.strokeStyle = css(color); ctx.lineWidth = ancho;
+    if (area) { ctx.globalAlpha = .3; }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  };
+  trazar((p) => p.cpu_max, "--cpu", 1, true);
+  trazar((p) => p.cpu_prom, "--cpu", 1.8);
+  trazar((p) => (p.mem_total ? (p.mem_prom / p.mem_total) * 100 : 0), "--mem", 1.8);
+  for (const [ts, color] of [[cursorTs, "--suave"], [momentoTs, "--acento"]]) {
+    if (ts && ts >= desde && ts <= hasta) {
+      ctx.strokeStyle = css(color); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x(ts), m.arr); ctx.lineTo(x(ts), m.arr + H); ctx.stroke();
+    }
+  }
+  if (cursorTs) {
+    const p = linea.reduce((a, b) => (Math.abs(b.ts - cursorTs) < Math.abs(a.ts - cursorTs) ? b : a));
+    const texto = `${hora(p.ts, true)} · CPU ${pct(p.cpu_prom)} (máx. ${pct(p.cpu_max)}) · Memoria ${bytes(p.mem_prom)}`;
+    const tw = ctx.measureText(texto).width + 12;
+    const tx = Math.min(w - m.der - tw, Math.max(m.izq, x(cursorTs) + 8));
+    ctx.fillStyle = css("--panel-2"); ctx.fillRect(tx, m.arr + 2, tw, 20);
+    ctx.strokeStyle = css("--borde"); ctx.strokeRect(tx + .5, m.arr + 2.5, tw - 1, 19);
+    ctx.fillStyle = css("--texto"); ctx.fillText(texto, tx + 6, m.arr + 16);
+  }
+}
+function tsDesdeEvento(e) {
+  const r = e.target.getBoundingClientRect();
+  const fr = (e.clientX - r.left - 44) / (r.width - 56);
+  if (fr < 0 || fr > 1) return null;
+  return rangoActual.desde + fr * (rangoActual.hasta - rangoActual.desde);
+}
+$("#grafico-historial").addEventListener("mousemove", (e) => { cursorTs = tsDesdeEvento(e); dibujarHistorial(); });
+$("#grafico-historial").addEventListener("mouseleave", () => { cursorTs = null; dibujarHistorial(); });
+$("#grafico-historial").addEventListener("click", (e) => { const ts = tsDesdeEvento(e); if (ts) elegirMomento(ts); });
+$("#momento-elegido").onchange = (e) => {
+  const ts = new Date(e.target.value).getTime();
+  if (!isNaN(ts)) { cargarHistorial(ts); elegirMomento(ts); }
+};
+async function elegirMomento(ts) {
+  momentoTs = ts; dibujarHistorial();
+  const caja = $("#momento");
+  let d = null;
+  try { d = await api(`/api/historial/momento?ts=${Math.round(ts)}`); } catch (e) { console.warn(e); }
+  if (!d) { caja.innerHTML = `<div class="vacio">No hay datos cerca de ${hora(ts, true)} (Vigía no estaba abierto).</div>`; return; }
+  const s = d.sistema;
+  const tabla = (apps, campo, fmt) => `<table><thead><tr><th>Aplicación</th><th class="num">${campo === "cpu_prom" ? "CPU" : "Memoria"}</th></tr></thead><tbody>${
+    apps.slice().sort((a, b) => b[campo] - a[campo]).slice(0, 10).map((a) => `<tr title="${esc(a.ruta || "")}"><td class="nombre-app recorte">${esc(a.nombre)}${a.descripcion ? `<small>${esc(a.descripcion)}</small>` : ""}</td><td class="num">${fmt(a[campo])}</td></tr>`).join("")}</tbody></table>`;
+  caja.innerHTML = `<div class="fila entre"><h3>Qué consumía más el ${new Date(s.ts).toLocaleString("es", { dateStyle: "full", timeStyle: "short" })}</h3>
+    <span class="suave chico">Sistema: CPU ${pct(s.cpu_prom)} (máx. ${pct(s.cpu_max)}) · Memoria ${bytes(s.mem_prom)} de ${bytes(s.mem_total)} · Red ↓ ${porSeg(s.red_rx)} ↑ ${porSeg(s.red_tx)}</span></div>
+    <div class="dos-col bloque"><div>${tabla(d.apps, "cpu_prom", pct)}</div><div>${tabla(d.apps, "mem_prom", bytes)}</div></div>`;
+}
+AL_ENTRAR.historial = () => cargarHistorial();
+
+// =====================================================================
+// Vista APLICACIONES
+// =====================================================================
+const PERIODOS = [["Hoy", "hoy"], ["Ayer", "ayer"], ["Últimos 7 días", "semana"], ["Últimos 30 días", "mes"]];
+let periodo = "hoy";
+function rangoPeriodo(p) {
+  const medianoche = new Date(); medianoche.setHours(0, 0, 0, 0);
+  const m = medianoche.getTime(), ahora = Date.now();
+  if (p === "ayer") return [m - 86400000, m];
+  if (p === "semana") return [ahora - 7 * 86400000, ahora];
+  if (p === "mes") return [ahora - 30 * 86400000, ahora];
+  return [m, ahora];
+}
+function armarPeriodos() {
+  $("#periodos-apps").innerHTML = PERIODOS.map(([t, p]) => `<button data-p="${p}">${t}</button>`).join("");
+  $$("#periodos-apps button").forEach((b) => (b.onclick = () => { periodo = b.dataset.p; cargarApps(); }));
+}
+$("#orden-apps").onchange = () => cargarApps();
+async function cargarApps() {
+  $$("#periodos-apps button").forEach((b) => b.classList.toggle("activo", b.dataset.p === periodo));
+  const [desde, hasta] = rangoPeriodo(periodo);
+  const ordenApps = $("#orden-apps").value;
+  let d;
+  try { d = await api(`/api/apps?desde=${desde}&hasta=${hasta}&orden=${ordenApps}&limite=50`); } catch (e) { return; }
+  const cuerpo = $("#tabla-apps tbody");
+  if (!d.apps.length) { cuerpo.innerHTML = `<tr><td colspan="7" class="vacio">Sin datos en este período todavía.</td></tr>`; return; }
+  const campo = { cpu: "cpu_prom", memoria: "mem_prom", io: "io_prom" }[ordenApps];
+  const max = Math.max(...d.apps.map((a) => a[campo])) || 1;
+  const barra = (a, c, texto) => c === campo
+    ? `<td class="num celda-barra"><div class="relleno" style="width:${((a[c] / max) * 100).toFixed(1)}%"></div><span>${texto}</span></td>` : `<td class="num">${texto}</td>`;
+  cuerpo.innerHTML = d.apps.map((a) => `<tr title="${esc(a.ruta || "")}">
+    <td class="nombre-app recorte">${esc(a.descripcion || a.nombre)}<small>${esc(a.descripcion ? a.nombre : "")}${a.empresa ? " · " + esc(a.empresa) : ""}</small></td>
+    ${barra(a, "cpu_prom", pct(a.cpu_prom))}<td class="num">${pct(a.cpu_max)}</td>
+    ${barra(a, "mem_prom", bytes(a.mem_prom))}<td class="num">${bytes(a.mem_max)}</td>
+    ${barra(a, "io_prom", porSeg(a.io_prom))}<td class="num">${duracion(a.minutos * 60000)}</td></tr>`).join("");
+}
+AL_ENTRAR.aplicaciones = () => cargarApps();
+
+// =====================================================================
+// Arranque
+// =====================================================================
+function redibujarTodo() {
+  if (ultima && vista === "ahora") pintarAhora();
+  if (vista === "historial") dibujarHistorial();
+}
+window.addEventListener("resize", redibujarTodo);
+async function arrancar() {
+  aplicarTema(localStorage.getItem("vigia-tema") || (matchMedia("(prefers-color-scheme: dark)").matches ? "oscuro" : "claro"));
+  armarNav(); armarRangos(); armarPeriodos();
+  const inicial = location.hash.slice(1);
+  irA(VISTAS.some(([v]) => v === inicial) ? inicial : "ahora");
+  if (!TOKEN) { mostrarSinToken(); return; }
+  try { pidVigia = (await api("/api/estado")).pid; } catch (e) { return; }
+  await actualizarAhora();
+  // Se actualiza cada 2 s, solo mientras la pestaña está visible.
+  setInterval(() => { if (!document.hidden && vista === "ahora") actualizarAhora(); }, 2000);
+}
+arrancar();
+</script>
+</body>
+</html>

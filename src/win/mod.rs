@@ -12,6 +12,7 @@
 pub mod proceso;
 pub mod red;
 pub mod sistema;
+pub mod sistema_extra;
 pub mod version;
 
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};

@@ -9,7 +9,7 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 | H0 Preparación | terminado | 2026-11-24T05:07:23-03:00 |
 | H1 Colector | terminado | 2026-11-24T05:15:03.6424647-03:00 |
 | H2 Historial | terminado | 2026-11-24T05:18:59.5027222-03:00 |
-| H3 Interfaz | pendiente | |
+| H3 Interfaz | terminado (revisión del subagente en curso) | 2026-11-24T05:28:45.3947719-03:00 |
 | H4 Disco | pendiente | |
 | H5 Inicio y conexiones | pendiente | |
 | H6 Avisos | pendiente | |
@@ -36,13 +36,21 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 - Tras las pruebas, `tasklist` no muestra ningún `vigia.exe` abierto.
 
 ### H2
-- `cargo test`: 20 pruebas pasan (14 unitarias, 4 del colector, 1 de historial en disco; +1 de base).
+- `cargo test`: 19 pruebas pasan (14 unitarias, 4 del colector, 1 de historial en disco).
   - Con reloj simulado: agrupación por app (chrome.exe + Chrome.exe = 1 app), cierre de minuto, capacidad del búfer en vivo, selección de las apps que más consumen + `(otros)` (la suma cuadra: 177 %), consultas `top_apps` / `momento` / `linea_tiempo` sobre 2 horas simuladas, retención por 30 días y por tope de tamaño (queda bajo el tope y nunca borra la última hora).
   - Con muestras reales: se guarda un minuto en `target/tmp/historial_prueba.db`, se reabre y se consulta.
 - `cargo clippy --all-targets -- -D warnings` sin avisos de código.
 
+### H3
+- `cargo test`: 33 pruebas pasan. Nuevas: `tests/servidor.rs` (4) y `tests/arranque.rs` (1), más unitarias de servidor y cliente.
+  - La página carga con CSP y sin recursos externos; Host ajeno → 403, Origin ajeno → 403 (también para apagar), sin token o con token incorrecto → 401; Origin propio y `localhost` aceptados.
+  - `/api/ahora` incluye el proceso de la prueba; `/api/proceso`, `/api/historial/*`, `/api/apps` responden; parámetro inválido → 400.
+  - Arranque real de `vigia.exe --sin-navegador --datos ...`: escribe su archivo de estado, sirve la página, un segundo arranque detecta la instancia y sale, `--detener` la cierra y borra el archivo.
+- Prueba manual con la versión release en el panel del navegador: vistas Ahora, detalle «¿Qué es esto?», Historial y Aplicaciones, en modo claro y oscuro, **sin errores en la consola de JavaScript**.
+- `cargo clippy --all-targets -- -D warnings` sin avisos.
+
 ## Qué sigue
-H3 Interfaz.
+Revisión de H3 por un subagente (en paralelo) y H4 Disco.
 
 ## Problemas abiertos
 Ninguno.
