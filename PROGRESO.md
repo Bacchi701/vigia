@@ -9,7 +9,7 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 | H0 Preparación | terminado | 2026-11-24T05:07:23-03:00 |
 | H1 Colector | terminado | 2026-11-24T05:15:03.6424647-03:00 |
 | H2 Historial | terminado | 2026-11-24T05:18:59.5027222-03:00 |
-| H3 Interfaz | terminado (revisión recibida, ver REVISION_H3.md) | 2026-11-24T05:28:45.3947719-03:00 |
+| H3 Interfaz | terminado; revisión aplicada 2026-11-24T05:55:38.6190022-03:00 (ver REVISION_H3.md) | 2026-11-24T05:28:45.3947719-03:00 |
 | H4 Disco | terminado | 2026-11-24T05:35:34.5801355-03:00 |
 | H5 Inicio y conexiones | terminado | 2026-11-24T05:42:52.4085010-03:00 |
 | H6 Avisos | pendiente | |
@@ -70,7 +70,7 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 - `cargo clippy --all-targets -- -D warnings` sin avisos.
 
 ## Qué sigue
-Aplicar la revisión de H3 (`REVISION_H3.md`). Luego H6 Avisos.
+H6 Avisos.
 
 ## Problemas abiertos
 Ninguno.

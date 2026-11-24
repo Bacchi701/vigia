@@ -308,7 +308,13 @@ impl App {
 fn bucle_colector(estado: &Estado) {
     let mut colector = Colector::new();
     let intervalo = estado.config.intervalo;
-    let mut proxima = Instant::now();
+    // La primera muestra solo sirve de referencia: sus tasas (CPU %, bytes/s)
+    // valen 0 porque no hay con qué comparar. No se registra; la siguiente
+    // llega antes (a lo sumo 1 s) para que la interfaz tenga datos pronto.
+    if let Err(e) = colector.muestrear(ahora_ms()) {
+        eprintln!("[vigía] error al tomar la primera muestra: {e}");
+    }
+    let mut proxima = Instant::now() + intervalo.min(Duration::from_secs(1));
     let mut proxima_retencion = Instant::now();
     while !estado.detenido() {
         let ahora = Instant::now();

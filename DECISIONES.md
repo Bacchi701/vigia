@@ -36,7 +36,7 @@ No se usa `sysinfo` ni crates parecidos: las llamadas a Windows están escritas 
 - **Por minuto se guardan solo las 12 apps con más CPU, las 12 con más memoria y las 5 con más E/S, más una fila `(otros)`** con la suma del resto · guardar todas · con ~370 procesos serían ~100 filas por minuto y ~4 millones de filas al mes; así son ~15–25 filas por minuto y los totales siguen cuadrando.
 - **Promedios del minuto cuentan como 0 las muestras en que la app no estaba** · promediar solo cuando estaba · así la suma de las apps da el total del sistema.
 - **En consultas por rango, `cpu_prom` y `mem_prom` se promedian sobre todo el rango**; además se entrega `mem_prom_activa` (solo mientras estuvo abierta) · un solo promedio · ordenar por el promedio del rango premia lo que más consumió en total.
-- **Retención: 30 días, y tope de 200 MB** (borrando por horas desde lo más viejo, nunca la última hora) · borrar por días · por horas se pasa menos del tope. `auto_vacuum=INCREMENTAL` + `PRAGMA incremental_vacuum` devuelve el espacio sin reescribir el archivo.
+- **Retención: 30 días, y tope de 200 MB** (borrando por horas desde lo más viejo, nunca la última hora; los análisis de disco tienen su propio tope de ¼) · borrar por días · por horas se pasa menos del tope. `auto_vacuum=INCREMENTAL` + `PRAGMA incremental_vacuum` (recorriendo todas sus filas) devuelve el espacio sin reescribir el archivo.
 - **WAL** (`journal_mode=WAL`) · modo por defecto · la interfaz puede leer mientras el colector escribe.
 - **Hora como parámetro en todo el historial** · un trait `Reloj` · las pruebas simulan horas de datos con solo pasar números (reloj simulado), sin trait extra.
 - **Pruebas que escriben en disco usan `CARGO_TARGET_TMPDIR`** (dentro de `target/`) y borran solo sus archivos concretos · carpeta temporal del sistema · la regla es escribir solo dentro de la carpeta del proyecto.
@@ -78,3 +78,9 @@ No se usa `sysinfo` ni crates parecidos: las llamadas a Windows están escritas 
 - **Solo TCP genera avisos de puerto nuevo** · también UDP · los puertos UDP cambian a cada rato (consultas DNS) y serían ruido. UDP sí se muestra en la lista.
 - **Sin resolución inversa de DNS** · mostrar nombres de dominio · enviaría consultas a internet por cada dirección; la regla es que nada salga del PC salvo cargo.
 - **«Accesible desde»**: 0.0.0.0/:: = toda la red; IP de una interfaz = la red de esa dirección; 127.x/::1 = solo este equipo.
+
+## Revisión de H3 (ver `REVISION_H3.md`)
+
+- **Instancia única con mutex con nombre** (`Local\Vigia-<hash de la carpeta de datos>`) · archivo de bloqueo · el mutex es atómico y Windows lo libera solo si el proceso muere.
+- **Un hilo por petición HTTP (máx. 16)** · un solo hilo · un cliente lento no bloquea la interfaz ni el cierre.
+- **Minuto repetido = combinar ponderando por muestras** · reemplazar · reiniciar Vigía dentro de un minuto no pierde datos.

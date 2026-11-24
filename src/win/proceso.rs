@@ -95,15 +95,18 @@ impl LectorProcesos {
                 continue;
             }
             estado.ok()?;
-            break;
+            // Si todo salió bien, `necesario` es la cantidad de bytes que
+            // Windows escribió: recorremos solo esos, no el búfer entero.
+            let escritos = if necesario == 0 { bytes } else { necesario };
+            return Ok(self.recorrer((escritos as usize).min(bytes as usize)));
         }
-        Ok(self.recorrer())
     }
 
-    /// Recorre la lista encadenada que Windows dejó en el búfer.
-    fn recorrer(&self) -> Vec<EntradaProceso> {
+    /// Recorre la lista encadenada que Windows dejó en los primeros `largo`
+    /// bytes del búfer.
+    fn recorrer(&self, largo: usize) -> Vec<EntradaProceso> {
         let base = self.bufer.as_ptr().cast::<u8>();
-        let largo = self.bufer.len() * 8;
+        let rango = base as usize..base as usize + largo;
         let tam_entrada = std::mem::size_of::<SYSTEM_PROCESS_INFORMATION>();
         let mut lista = Vec::with_capacity(400);
         let mut desplazamiento = 0usize;
@@ -115,7 +118,7 @@ impl LectorProcesos {
                     .add(desplazamiento)
                     .cast::<SYSTEM_PROCESS_INFORMATION>()
             };
-            lista.push(convertir(info));
+            lista.push(convertir(info, &rango));
             if info.NextEntryOffset == 0 {
                 break;
             }
@@ -126,7 +129,9 @@ impl LectorProcesos {
 }
 
 /// Lee los campos de una entrada, incluidos los "reservados".
-fn convertir(info: &SYSTEM_PROCESS_INFORMATION) -> EntradaProceso {
+/// `rango` son las direcciones válidas del búfer: el nombre del proceso
+/// debe caer dentro de él.
+fn convertir(info: &SYSTEM_PROCESS_INFORMATION, rango: &std::ops::Range<usize>) -> EntradaProceso {
     // `Reserved1` (48 bytes) contiene, en este orden:
     //   0..8   WorkingSetPrivateSize   (memoria física privada)
     //   8..12  HardFaultCount
@@ -153,14 +158,18 @@ fn convertir(info: &SYSTEM_PROCESS_INFORMATION) -> EntradaProceso {
 
     // El nombre es un UNICODE_STRING: puntero + largo en **bytes**, sin cero
     // final. El puntero apunta dentro de nuestro mismo búfer.
-    let nombre = if info.ImageName.Buffer.is_null() || info.ImageName.Length == 0 {
+    let inicio_nombre = info.ImageName.Buffer.0 as usize;
+    let fin_nombre = inicio_nombre + usize::from(info.ImageName.Length);
+    let nombre_valido = rango.contains(&inicio_nombre) && fin_nombre <= rango.end;
+    let nombre = if !nombre_valido || info.ImageName.Length == 0 {
         if info.UniqueProcessId.0.is_null() {
             "Proceso inactivo del sistema".to_string()
         } else {
             String::new()
         }
     } else {
-        // SAFETY: Windows garantiza `Length` bytes válidos en `Buffer`.
+        // SAFETY: comprobamos arriba que `Length` bytes desde `Buffer`
+        // están dentro de nuestro búfer.
         let s = unsafe {
             std::slice::from_raw_parts(
                 info.ImageName.Buffer.0,
@@ -259,6 +268,33 @@ fn ruta_sin_abrir(pid: u32) -> Option<String> {
 
 /// Convierte `\Device\HarddiskVolume3\x` en `C:\x` probando cada letra.
 fn dispositivo_a_dos(ruta_nt: &str) -> Option<String> {
+    tabla_de_unidades()
+        .into_iter()
+        .find_map(|(unidad, dispositivo)| {
+            ruta_nt
+                .strip_prefix(&dispositivo)
+                .filter(|resto| resto.starts_with('\\'))
+                .map(|resto| format!("{unidad}{resto}"))
+        })
+}
+
+/// Pares (letra, dispositivo), p. ej. ("C:", "\Device\HarddiskVolume3").
+/// Se recalcula como mucho cada 60 s: al arrancar hay unos 150 procesos que
+/// necesitan esta conversión y no tiene sentido preguntar 26 letras para
+/// cada uno.
+fn tabla_de_unidades() -> Vec<(String, String)> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    /// (cuándo se armó, pares letra → dispositivo)
+    type Tabla = Option<(Instant, Vec<(String, String)>)>;
+    static CACHE: Mutex<Tabla> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((cuando, tabla)) = cache.as_ref()
+        && cuando.elapsed() < Duration::from_secs(60)
+    {
+        return tabla.clone();
+    }
+    let mut tabla = Vec::new();
     for letra in b'A'..=b'Z' {
         let unidad = format!("{}:", letra as char);
         let unidad_w = super::a_utf16(&unidad);
@@ -271,17 +307,12 @@ fn dispositivo_a_dos(ruta_nt: &str) -> Option<String> {
                 Some(&mut destino),
             )
         };
-        if n == 0 {
-            continue;
-        }
-        let dispositivo = super::desde_utf16(&destino);
-        if let Some(resto) = ruta_nt.strip_prefix(&dispositivo)
-            && resto.starts_with('\\')
-        {
-            return Some(format!("{unidad}{resto}"));
+        if n != 0 {
+            tabla.push((unidad, super::desde_utf16(&destino)));
         }
     }
-    None
+    *cache = Some((Instant::now(), tabla.clone()));
+    tabla
 }
 
 /// Ruta abriendo el proceso con el derecho mínimo.

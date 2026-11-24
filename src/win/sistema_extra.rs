@@ -95,3 +95,50 @@ pub fn cierre_pedido() -> bool {
 pub fn marcar_cierre_listo() {
     CIERRE_LISTO.store(true, Ordering::SeqCst);
 }
+
+/// Evita que Windows muestre cuadros de diálogo como «No hay disco en la
+/// unidad» cuando Vigía consulta un lector de tarjetas vacío. Afecta solo
+/// a este proceso.
+pub fn sin_dialogos_de_error() {
+    use windows::Win32::System::Diagnostics::Debug::{
+        SEM_FAILCRITICALERRORS, SEM_NOOPENFILEERRORBOX, SetErrorMode,
+    };
+    // SetErrorMode (kernel32): con SEM_FAILCRITICALERRORS los errores
+    // "críticos" (como un disco ausente) se devuelven como error a quien
+    // llamó, en lugar de mostrar un cuadro al usuario.
+    unsafe {
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+    }
+}
+
+/// Bloqueo de "una sola instancia": mientras exista, otro `vigia.exe` con
+/// la misma carpeta de datos no puede crear el suyo.
+pub struct InstanciaUnica(windows::Win32::Foundation::HANDLE);
+
+impl Drop for InstanciaUnica {
+    fn drop(&mut self) {
+        // CloseHandle (kernel32): al cerrar la última manija, Windows borra
+        // el mutex y otra instancia ya puede arrancar.
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+/// Intenta tomar el bloqueo `nombre`. Devuelve `None` si otra instancia ya
+/// lo tiene.
+pub fn instancia_unica(nombre: &str) -> Resultado<Option<InstanciaUnica>> {
+    use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows::Win32::System::Threading::CreateMutexW;
+    let nombre_w = a_utf16(nombre);
+    // CreateMutexW (kernel32): crea un mutex con nombre, o abre el existente.
+    // Es una operación atómica del sistema: si dos procesos lo intentan a la
+    // vez, solo uno lo crea y el otro recibe ERROR_ALREADY_EXISTS. El prefijo
+    // "Local\" lo limita a la sesión del usuario actual.
+    let h = unsafe { CreateMutexW(None, false, PCWSTR(nombre_w.as_ptr()))? };
+    // GetLastError (kernel32): CreateMutexW tiene éxito también cuando el
+    // mutex ya existía; la diferencia se ve en el último error.
+    let ya_existia = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+    let bloqueo = InstanciaUnica(h);
+    Ok((!ya_existia).then_some(bloqueo))
+}

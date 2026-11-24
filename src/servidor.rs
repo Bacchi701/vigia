@@ -20,7 +20,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tiny_http::{Header, Request, Server};
 
@@ -29,6 +29,9 @@ const PAGINA: &str = include_str!("../ui/index.html");
 
 /// Tamaño máximo aceptado para el cuerpo de una petición.
 const MAX_CUERPO: u64 = 64 * 1024;
+
+/// Peticiones atendidas a la vez como máximo.
+const MAX_HILOS: usize = 16;
 
 /// Respuesta antes de convertirla a `tiny_http`.
 pub struct Respuesta {
@@ -65,10 +68,33 @@ impl Respuesta {
 
 /// Bucle del hilo servidor. Espera peticiones en intervalos cortos para
 /// poder notar a tiempo que hay que detenerse.
+///
+/// Cada petición se atiende en un hilo propio (con un máximo de
+/// `MAX_HILOS` a la vez): así un cliente lento o una consulta larga no
+/// bloquean la interfaz ni el cierre de Vigía.
 pub fn atender(servidor: &Server, estado: &Arc<Estado>) {
+    let activos = Arc::new(AtomicUsize::new(0));
     while !estado.detenido() {
         match servidor.recv_timeout(Duration::from_millis(250)) {
-            Ok(Some(peticion)) => manejar(peticion, estado),
+            Ok(Some(peticion)) => {
+                if activos.load(Ordering::SeqCst) >= MAX_HILOS {
+                    let _ = peticion
+                        .respond(tiny_http::Response::from_string("Ocupado").with_status_code(503));
+                    continue;
+                }
+                activos.fetch_add(1, Ordering::SeqCst);
+                let (e, a) = (Arc::clone(estado), Arc::clone(&activos));
+                let lanzado =
+                    std::thread::Builder::new()
+                        .name("peticion".into())
+                        .spawn(move || {
+                            manejar(peticion, &e);
+                            a.fetch_sub(1, Ordering::SeqCst);
+                        });
+                if lanzado.is_err() {
+                    activos.fetch_sub(1, Ordering::SeqCst);
+                }
+            }
             Ok(None) => {}
             Err(e) => {
                 eprintln!("[vigía] error del servidor: {e}");
@@ -103,22 +129,29 @@ fn manejar(mut peticion: Request, estado: &Arc<Estado>) {
     let host = encabezado("Host");
     let origen = encabezado("Origin");
     let token = encabezado("X-Vigia-Token");
-    let mut cuerpo = String::new();
-    let _ = peticion
-        .as_reader()
-        .take(MAX_CUERPO)
-        .read_to_string(&mut cuerpo);
-
-    let p = Peticion {
+    let mut p = Peticion {
         metodo: &metodo,
         ruta,
         consulta: parsear_consulta(consulta),
         host: host.as_deref(),
         origen: origen.as_deref(),
         token: token.as_deref(),
-        cuerpo,
+        cuerpo: String::new(),
     };
-    let r = rutear(&p, estado);
+    // El cuerpo se lee solo si la petición pasó las comprobaciones de
+    // seguridad y es un POST: nadie sin token puede hacernos esperar datos.
+    let r = match rechazo(&p, estado) {
+        Some(r) => r,
+        None => {
+            if p.metodo == "POST" {
+                let _ = peticion
+                    .as_reader()
+                    .take(MAX_CUERPO)
+                    .read_to_string(&mut p.cuerpo);
+            }
+            rutear(&p, estado)
+        }
+    };
 
     let mut respuesta = tiny_http::Response::from_data(r.cuerpo).with_status_code(r.estado);
     let mut encabezados = vec![
@@ -179,13 +212,25 @@ fn token_valido(dado: Option<&str>, correcto: &str) -> bool {
         == 0
 }
 
-/// Decide la respuesta. Separado de `manejar` para que sea fácil de leer.
-pub fn rutear(p: &Peticion, estado: &Arc<Estado>) -> Respuesta {
+/// Comprobaciones de seguridad. Devuelve `Some(respuesta de error)` si la
+/// petición debe rechazarse.
+fn rechazo(p: &Peticion, estado: &Estado) -> Option<Respuesta> {
     if !host_valido(p.host, estado.puerto) {
-        return Respuesta::error(403, "Host no permitido");
+        return Some(Respuesta::error(403, "Host no permitido"));
     }
     if !origen_valido(p.origen, estado.puerto) {
-        return Respuesta::error(403, "Origen no permitido");
+        return Some(Respuesta::error(403, "Origen no permitido"));
+    }
+    if p.ruta.starts_with("/api/") && !token_valido(p.token, &estado.token) {
+        return Some(Respuesta::error(401, "Falta el token o no es válido"));
+    }
+    None
+}
+
+/// Decide la respuesta. Separado de `manejar` para que sea fácil de leer.
+pub fn rutear(p: &Peticion, estado: &Arc<Estado>) -> Respuesta {
+    if let Some(r) = rechazo(p, estado) {
+        return r;
     }
     if !p.ruta.starts_with("/api/") {
         return match (p.metodo, p.ruta) {
@@ -198,9 +243,6 @@ pub fn rutear(p: &Peticion, estado: &Arc<Estado>) -> Respuesta {
             _ => Respuesta::error(404, "No existe"),
         };
     }
-    if !token_valido(p.token, &estado.token) {
-        return Respuesta::error(401, "Falta el token o no es válido");
-    }
     match api(p, estado) {
         Ok(r) => r,
         Err(Error::Mensaje(m)) => Respuesta::error(400, &m),
@@ -212,8 +254,11 @@ fn api(p: &Peticion, estado: &Arc<Estado>) -> Resultado<Respuesta> {
     let num = |clave: &str, omision: i64| -> Resultado<i64> {
         match p.consulta.get(clave) {
             None => Ok(omision),
+            // Se limita a ±2^52 (unos 140 000 años en ms): ninguna suma o
+            // resta posterior entre dos de estos valores puede desbordarse.
             Some(v) => v
-                .parse()
+                .parse::<i64>()
+                .map(|n| n.clamp(-(1 << 52), 1 << 52))
                 .map_err(|_| error(format!("parámetro '{clave}' inválido"))),
         }
     };
@@ -248,7 +293,8 @@ fn api(p: &Peticion, estado: &Arc<Estado>) -> Resultado<Respuesta> {
         ("GET", "/api/historial/momento") => {
             let ts = num("ts", ahora)?;
             let conn = bloquear(&estado.base);
-            Respuesta::json(&historial::momento(&conn, ts)?)
+            let radio = num("radio", 10 * MINUTO_MS)?;
+            Respuesta::json(&historial::momento(&conn, ts, radio)?)
         }
         ("GET", "/api/apps") => {
             let hasta = num("hasta", ahora)?;

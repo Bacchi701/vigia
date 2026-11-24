@@ -200,8 +200,11 @@ impl Historial {
 
         // --- Por minuto ---
         let minuto = minuto_de(m.ts);
+        // Solo se cierra el minuto si la hora avanzó. Si el reloj retrocede
+        // (ajuste manual o sincronización), se sigue sumando al minuto en
+        // curso en lugar de volver a abrir uno ya guardado.
         let cerrado = match &self.acum {
-            Some(a) if a.minuto != minuto => self.acum.take().map(finalizar),
+            Some(a) if minuto > a.minuto => self.acum.take().map(finalizar),
             _ => None,
         };
         let acum = self.acum.get_or_insert_with(|| Acumulador {
@@ -347,13 +350,37 @@ fn finalizar(a: Acumulador) -> ResumenMinuto {
 }
 
 /// Guarda el resumen de un minuto (en una sola transacción).
+///
+/// Si ese minuto ya estaba guardado (Vigía se cerró y se volvió a abrir
+/// dentro del mismo minuto), **combina** ambos resúmenes ponderando por la
+/// cantidad de muestras, en lugar de reemplazar el anterior.
 pub fn guardar_minuto(conn: &mut Connection, r: &ResumenMinuto) -> Resultado<()> {
     let tx = conn.transaction()?;
     let s = &r.sistema;
+    let previas: u32 = tx
+        .query_row(
+            "SELECT muestras FROM minuto_sistema WHERE ts = ?1",
+            [s.ts],
+            |f| f.get(0),
+        )
+        .optional()?
+        .unwrap_or(0);
+    let total = f64::from(previas + s.muestras).max(1.0);
+    // Peso de lo ya guardado y de lo nuevo en el promedio combinado.
+    let (peso_viejo, peso_nuevo) = (f64::from(previas) / total, f64::from(s.muestras) / total);
     tx.execute(
-        "INSERT OR REPLACE INTO minuto_sistema
+        "INSERT INTO minuto_sistema
          (ts, cpu_prom, cpu_max, mem_prom, mem_max, mem_total, red_rx, red_tx, muestras)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(ts) DO UPDATE SET
+           cpu_prom  = cpu_prom * ?10 + excluded.cpu_prom * ?11,
+           cpu_max   = MAX(cpu_max, excluded.cpu_max),
+           mem_prom  = CAST(mem_prom * ?10 + excluded.mem_prom * ?11 AS INTEGER),
+           mem_max   = MAX(mem_max, excluded.mem_max),
+           mem_total = excluded.mem_total,
+           red_rx    = red_rx * ?10 + excluded.red_rx * ?11,
+           red_tx    = red_tx * ?10 + excluded.red_tx * ?11,
+           muestras  = muestras + excluded.muestras",
         params![
             s.ts,
             s.cpu_prom,
@@ -363,9 +390,21 @@ pub fn guardar_minuto(conn: &mut Connection, r: &ResumenMinuto) -> Resultado<()>
             s.mem_total as i64,
             s.red_rx,
             s.red_tx,
-            s.muestras
+            s.muestras,
+            peso_viejo,
+            peso_nuevo
         ],
     )?;
+    if previas > 0 {
+        // Las apps ya guardadas pesan según sus muestras; las que no vuelvan
+        // a aparecer quedan con su parte (como si hubieran usado 0 después).
+        tx.execute(
+            "UPDATE minuto_app SET cpu_prom = cpu_prom * ?2,
+               mem_prom = CAST(mem_prom * ?2 AS INTEGER), io_prom = io_prom * ?2
+             WHERE ts = ?1",
+            params![s.ts, peso_viejo],
+        )?;
+    }
     for app in &r.apps {
         // Inserta la app si es nueva (o completa sus datos) y devuelve su id.
         let id: i64 = tx.query_row(
@@ -379,17 +418,24 @@ pub fn guardar_minuto(conn: &mut Connection, r: &ResumenMinuto) -> Resultado<()>
             |f| f.get(0),
         )?;
         tx.execute(
-            "INSERT OR REPLACE INTO minuto_app
+            "INSERT INTO minuto_app
              (ts, app_id, cpu_prom, cpu_max, mem_prom, mem_max, io_prom, procesos)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(ts, app_id) DO UPDATE SET
+               cpu_prom = cpu_prom + excluded.cpu_prom,
+               cpu_max  = MAX(cpu_max, excluded.cpu_max),
+               mem_prom = mem_prom + excluded.mem_prom,
+               mem_max  = MAX(mem_max, excluded.mem_max),
+               io_prom  = io_prom + excluded.io_prom,
+               procesos = MAX(procesos, excluded.procesos)",
             params![
                 s.ts,
                 id,
-                app.cpu_prom,
+                app.cpu_prom * peso_nuevo,
                 app.cpu_max,
-                app.mem_prom as i64,
+                (app.mem_prom as f64 * peso_nuevo) as i64,
                 app.mem_max as i64,
-                app.io_prom,
+                app.io_prom * peso_nuevo,
                 app.procesos
             ],
         )?;
@@ -418,8 +464,13 @@ pub fn aplicar_retencion(
     let mut borrados = borrar_antes_de(conn, limite)?;
     conn.execute("DELETE FROM avisos WHERE ts < ?1", [limite])?;
 
+    // Los análisis de disco guardados tienen su propio tope (una cuarta
+    // parte del total), para que nunca obliguen a borrar historial.
+    crate::disco::limitar(conn, tope_bytes / 4)?;
+
     let ultima_hora = ahora_ms - 60 * MINUTO_MS;
-    while base::bytes_usados(conn)? > tope_bytes {
+    let mut usados = base::bytes_usados(conn)?;
+    while usados > tope_bytes {
         let mas_viejo: Option<i64> = conn
             .query_row("SELECT MIN(ts) FROM minuto_sistema", [], |f| f.get(0))
             .optional()?
@@ -430,9 +481,23 @@ pub fn aplicar_retencion(
             break;
         }
         borrados += borrar_antes_de(conn, corte)?;
+        let ahora = base::bytes_usados(conn)?;
+        if ahora >= usados {
+            break; // Borrar historial ya no achica la base: no seguir.
+        }
+        usados = ahora;
     }
-    // Devuelve al sistema de archivos las páginas liberadas.
-    conn.execute_batch("PRAGMA incremental_vacuum;")?;
+    // Aplicaciones que ya no aparecen en ningún minuto.
+    conn.execute(
+        "DELETE FROM apps WHERE id NOT IN (SELECT DISTINCT app_id FROM minuto_app)",
+        [],
+    )?;
+    // Devuelve al sistema de archivos las páginas liberadas. Este PRAGMA
+    // libera una página por cada fila que se lee de su resultado, así que
+    // hay que recorrerlo entero (con `execute_batch` liberaría solo una).
+    let mut st = conn.prepare("PRAGMA incremental_vacuum")?;
+    let mut filas = st.query([])?;
+    while filas.next()?.is_some() {}
     Ok(Retencion {
         minutos_borrados: borrados,
         bytes_usados: base::bytes_usados(conn)?,
@@ -579,13 +644,16 @@ pub struct Momento {
     pub apps: Vec<MinutoApp>,
 }
 
-pub fn momento(conn: &Connection, ts: i64) -> Resultado<Option<Momento>> {
+/// `radio_ms`: hasta qué distancia buscar (al menos 10 min). Con rangos largos
+/// la interfaz pasa el ancho de cada punto del gráfico.
+pub fn momento(conn: &Connection, ts: i64, radio_ms: i64) -> Resultado<Option<Momento>> {
+    let radio = radio_ms.clamp(10 * MINUTO_MS, 7 * DIA_MS);
     let sistema = conn
         .query_row(
             "SELECT ts, cpu_prom, cpu_max, mem_prom, mem_max, mem_total, red_rx, red_tx, muestras
-             FROM minuto_sistema WHERE ts BETWEEN ?1 - 600000 AND ?1 + 600000
+             FROM minuto_sistema WHERE ts BETWEEN ?1 - ?2 AND ?1 + ?2
              ORDER BY ABS(ts - ?1) LIMIT 1",
-            [minuto_de(ts)],
+            [minuto_de(ts), radio],
             |f| {
                 Ok(MinutoSistema {
                     ts: f.get(0)?,
@@ -808,13 +876,13 @@ pub(crate) mod pruebas {
         assert_eq!(top[0].mem_prom_activa, 3000 * 1_048_576);
 
         // Momento a los 30 minutos: juego.exe arriba.
-        let m = momento(&conn, inicio + 30 * MINUTO_MS + 12_345)
+        let m = momento(&conn, inicio + 30 * MINUTO_MS + 12_345, 0)
             .unwrap()
             .unwrap();
         assert_eq!(m.sistema.ts, inicio + 30 * MINUTO_MS);
         assert_eq!(m.apps[0].nombre, "juego.exe");
         // Momento muy lejos de cualquier dato: nada.
-        assert!(momento(&conn, inicio - DIA_MS).unwrap().is_none());
+        assert!(momento(&conn, inicio - DIA_MS, 0).unwrap().is_none());
 
         // Línea de tiempo con máximo 12 puntos: 119 minutos en grupos de 10.
         let linea = linea_tiempo(&conn, inicio, inicio + 120 * MINUTO_MS, 12).unwrap();
@@ -875,5 +943,100 @@ pub(crate) mod pruebas {
             .query_row("SELECT MIN(ts) FROM minuto_sistema", [], |f| f.get(0))
             .unwrap();
         assert!(min >= ahora - 60 * MINUTO_MS, "{r:?}");
+    }
+}
+
+/// Pruebas de las correcciones pedidas en la revisión de H3.
+#[cfg(test)]
+mod pruebas_revision {
+    use super::pruebas::{muestra, proceso};
+    use super::*;
+
+    const T0: i64 = 1_790_000_000_000;
+
+    #[test]
+    fn reinicio_dentro_del_mismo_minuto_combina_en_vez_de_pisar() {
+        let mut conn = base::en_memoria().unwrap();
+        let m = minuto_de(T0);
+        // Primera vida: 15 muestras con un.exe al 10 %.
+        let mut h = Historial::new(10);
+        for i in 0..15 {
+            h.registrar(&muestra(
+                m + i * 2000,
+                vec![proceso(1, "uno.exe", 10.0, 100)],
+            ));
+        }
+        guardar_minuto(&mut conn, &h.cerrar().unwrap()).unwrap();
+        // Segunda vida en el mismo minuto: 15 muestras con dos.exe al 30 %.
+        let mut h = Historial::new(10);
+        for i in 15..30 {
+            h.registrar(&muestra(
+                m + i * 2000,
+                vec![proceso(2, "dos.exe", 30.0, 300)],
+            ));
+        }
+        guardar_minuto(&mut conn, &h.cerrar().unwrap()).unwrap();
+
+        let mo = momento(&conn, m, 0).unwrap().unwrap();
+        assert_eq!(mo.sistema.muestras, 30);
+        assert!((mo.sistema.cpu_prom - 20.0).abs() < 1e-9);
+        let uno = mo.apps.iter().find(|a| a.nombre == "uno.exe").unwrap();
+        let dos = mo.apps.iter().find(|a| a.nombre == "dos.exe").unwrap();
+        assert!((uno.cpu_prom - 5.0).abs() < 1e-9);
+        assert!((dos.cpu_prom - 15.0).abs() < 1e-9);
+        // La suma de las apps sigue cuadrando con el sistema.
+        assert!((uno.cpu_prom + dos.cpu_prom - mo.sistema.cpu_prom).abs() < 1e-9);
+    }
+
+    #[test]
+    fn reloj_que_retrocede_no_reabre_un_minuto_cerrado() {
+        let mut h = Historial::new(10);
+        let m = minuto_de(T0);
+        assert!(h.registrar(&muestra(m + 5 * MINUTO_MS, vec![])).is_none());
+        // La hora vuelve un minuto atrás: no se cierra nada.
+        assert!(
+            h.registrar(&muestra(m + 4 * MINUTO_MS + 30_000, vec![]))
+                .is_none()
+        );
+        // Al avanzar, se cierra el minuto 5 con las dos muestras.
+        let r = h.registrar(&muestra(m + 6 * MINUTO_MS, vec![])).unwrap();
+        assert_eq!(r.sistema.ts, m + 5 * MINUTO_MS);
+        assert_eq!(r.sistema.muestras, 2);
+    }
+
+    #[test]
+    fn los_analisis_de_disco_no_obligan_a_borrar_historial() {
+        let mut conn = base::en_memoria().unwrap();
+        let mut h = Historial::new(10);
+        let inicio = minuto_de(T0);
+        pruebas::simular(&mut conn, &mut h, inicio, 180, |_| {
+            vec![proceso(1, "a.exe", 1.0, 1)]
+        });
+        // Muchos análisis grandes de mentira.
+        let relleno = "x".repeat(200_000);
+        for i in 0..40 {
+            conn.execute(
+                "INSERT INTO analisis_disco(raiz, inicio, fin, total, archivos, completo, datos)
+                 VALUES (?1, 0, 0, 0, 0, 1, ?2)",
+                params![format!("raiz{i}"), relleno],
+            )
+            .unwrap();
+        }
+        let usado = base::bytes_usados(&conn).unwrap();
+        let antes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM minuto_sistema", [], |f| f.get(0))
+            .unwrap();
+        // Tope: lo que ocupa el historial + 1 MB para análisis (tope/4 ≈ 1 MB).
+        let tope = 4 * 1024 * 1024;
+        assert!(usado > tope);
+        aplicar_retencion(&conn, inicio + 180 * MINUTO_MS, 30, tope).unwrap();
+        let despues: i64 = conn
+            .query_row("SELECT COUNT(*) FROM minuto_sistema", [], |f| f.get(0))
+            .unwrap();
+        assert_eq!(antes, despues, "no debió borrar historial");
+        let analisis: i64 = conn
+            .query_row("SELECT COUNT(*) FROM analisis_disco", [], |f| f.get(0))
+            .unwrap();
+        assert!((1..40).contains(&analisis));
     }
 }

@@ -136,6 +136,9 @@ tbody tr.elegido { background: var(--acento-suave); }
   <button id="boton-tema" title="Cambiar entre modo claro y oscuro">Modo oscuro</button>
 </header>
 
+<div id="sin-conexion" role="alert" style="display:none;background:var(--peligro);color:#fff;padding:8px 20px;text-align:center">
+  Sin conexión con Vigía: los datos de esta página no se están actualizando. ¿Está abierto? Vuelve a abrirlo con <b>iniciar_vigia.bat</b>.
+</div>
 <div id="aviso-token" class="panel aviso-token">
   <h2>Falta la llave de acceso</h2>
   <p class="suave">Por seguridad, Vigía solo responde a la ventana que abrió al iniciarse.
@@ -212,7 +215,7 @@ tbody tr.elegido { background: var(--acento-suave); }
       «Promedio» cuenta todo el período, incluso cuando la aplicación estaba cerrada.</p>
     <div class="tabla-caja"><table id="tabla-apps"><thead><tr>
       <th>Aplicación</th><th class="num">CPU promedio</th><th class="num">CPU máxima</th>
-      <th class="num">Memoria promedio</th><th class="num">Memoria máxima</th><th class="num">Lectura y escritura</th><th class="num">Tiempo activa</th>
+      <th class="num">Memoria promedio</th><th class="num">Memoria máxima</th><th class="num">Lectura y escritura</th><th class="num" title="Minutos en que la aplicación estuvo entre las que más consumían (las pequeñas se guardan juntas como «otras»)">Minutos destacada</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
 
@@ -323,7 +326,15 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 const TOKEN = sessionStorage.getItem("vigia-token") || "";
 let sinToken = false;
 async function api(ruta, opciones = {}) {
-  const r = await fetch(ruta, { ...opciones, headers: { "X-Vigia-Token": TOKEN, ...(opciones.headers || {}) } });
+  let r;
+  try {
+    r = await fetch(ruta, { ...opciones, headers: { "X-Vigia-Token": TOKEN, ...(opciones.headers || {}) } });
+  } catch (e) {
+    // Vigía no responde (se cerró o se está reiniciando).
+    $("#sin-conexion").style.display = "block";
+    throw e;
+  }
+  $("#sin-conexion").style.display = "none";
   if (r.status === 401) { mostrarSinToken(); throw new Error("sin token"); }
   const datos = await r.json();
   if (!r.ok) throw new Error(datos.error || r.statusText);
@@ -443,7 +454,7 @@ function pintarAhora() {
 
   const yo = ultima.procesos.find((p) => p.pid === pidVigia);
   if (yo) $("#estado-propio").innerHTML = `Vigía usa ${pct(yo.cpu)} de CPU y ${bytes(yo.memoria)}<br>Última muestra ${hora(ultima.ts)}`;
-  pintarTablaProcesos();
+  if (!punteroApretado) pintarTablaProcesos();
 }
 // Filas de la tabla: procesos sueltos o agrupados por aplicación.
 function filasProcesos() {
@@ -457,7 +468,12 @@ function filasProcesos() {
       if (!a) g.set(k, { ...p });
       else {
         a.cpu += p.cpu; a.memoria += p.memoria; a.io += p.io; a.n += 1;
-        a.inicio_ms = Math.min(a.inicio_ms || Infinity, p.inicio_ms || Infinity);
+        // La fila agrupada representa al proceso más antiguo del grupo:
+        // PID, hora de inicio y ruta salen del mismo proceso, así el panel
+        // de detalle lo encuentra.
+        if (p.inicio_ms && (!a.inicio_ms || p.inicio_ms < a.inicio_ms)) {
+          Object.assign(a, { pid: p.pid, inicio_ms: p.inicio_ms, ruta: p.ruta, ppid: p.ppid });
+        }
       }
     }
     filas = Array.from(g.values());
@@ -480,6 +496,9 @@ function pintarTablaProcesos() {
     if (th.dataset.col === orden.col) th.insertAdjacentHTML("beforeend", ` <span class="flecha">${orden.desc ? "▼" : "▲"}</span>`);
   });
   $("#resumen-procesos").textContent = `${filas.length} ${agrupado ? "aplicaciones" : "procesos"} · ${ultima.sistema.n_cpu} procesadores lógicos`;
+  // Recordar qué fila tenía el foco del teclado para devolvérselo.
+  const conFoco = document.activeElement?.closest?.("#tabla-procesos tr");
+  const claveFoco = conFoco ? conFoco.dataset.pid + ":" + conFoco.dataset.inicio : null;
   $("#tabla-procesos tbody").innerHTML = filas.map((p) => {
     const sel = elegido && elegido.pid === p.pid && elegido.inicio === (p.inicio_ms || 0) ? "elegido" : "";
     const nombre = p.descripcion && p.descripcion.toLowerCase() !== p.nombre.toLowerCase()
@@ -493,7 +512,16 @@ function pintarTablaProcesos() {
       <td>${hora(p.inicio_ms)}</td>
       <td class="recorte">${esc(p.empresa || "")}</td></tr>`;
   }).join("");
+  if (claveFoco) {
+    const [pid, inicio] = claveFoco.split(":");
+    $(`#tabla-procesos tr[data-pid="${pid}"][data-inicio="${inicio}"]`)?.focus({ preventScroll: true });
+  }
 }
+// Mientras hay un botón del ratón apretado sobre la tabla no se redibuja:
+// si no, un clic que cae justo en una actualización se perdería.
+let punteroApretado = false;
+$("#tabla-procesos").addEventListener("pointerdown", () => (punteroApretado = true));
+window.addEventListener("pointerup", () => (punteroApretado = false));
 $$("#tabla-procesos th[data-col]").forEach((th) => (th.onclick = () => {
   const c = th.dataset.col;
   orden = { col: c, desc: orden.col === c ? !orden.desc : !["nombre", "empresa"].includes(c) };
@@ -511,43 +539,60 @@ $("#tabla-procesos tbody").addEventListener("click", (e) => { const tr = e.targe
 $("#tabla-procesos tbody").addEventListener("keydown", (e) => { if (e.key === "Enter") { const tr = e.target.closest("tr"); if (tr) abrirDesdeFila(tr); } });
 
 // ---------- Panel «¿Qué es esto?» ----------
-function cerrarDetalle() { elegido = null; $("#detalle").classList.remove("abierto"); if (ultima) pintarTablaProcesos(); }
+function cerrarDetalle() { elegido = null; claveDetalle = null; $("#detalle").classList.remove("abierto"); if (ultima) pintarTablaProcesos(); }
 $("#cerrar-detalle").onclick = cerrarDetalle;
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") cerrarDetalle(); });
+let claveDetalle = null, pedidoDetalle = 0;
 async function pintarDetalle() {
   if (!elegido || !ultima) return;
   const p = ultima.procesos.find((x) => x.pid === elegido.pid && (x.inicio_ms || 0) === elegido.inicio);
   const cuerpo = $("#detalle-cuerpo");
-  if (!p) { cuerpo.innerHTML = `<p class="suave">Este proceso ya terminó.</p>`; return; }
-  const padre = ultima.procesos.find((x) => x.pid === p.ppid);
-  let explicacion = "";
-  if (p.acceso_limitado) explicacion = `<p class="explicacion chico">Windows no deja leer la ruta de este proceso sin permisos de administrador. Suele tratarse de un componente protegido del sistema.</p>`;
-  else if (!p.empresa) explicacion = `<p class="explicacion chico">El ejecutable no declara empresa ni descripción. No es necesariamente malo (muchas herramientas de desarrollo no lo hacen), pero si no lo reconoces, revisa la ruta.</p>`;
-  cuerpo.innerHTML = `
-    <h3 class="bloque">${esc(p.descripcion || p.nombre)}</h3>
-    <dl>
-      <dt>Ejecutable</dt><dd>${esc(p.nombre)}</dd>
-      <dt>Empresa</dt><dd>${esc(p.empresa || "No declarada")}</dd>
-      <dt>Descripción</dt><dd>${esc(p.descripcion || "No declarada")}</dd>
-      <dt>Ruta</dt><dd>${esc(p.ruta || "No disponible")}</dd>
-      <dt>PID</dt><dd>${p.pid}</dd>
-      <dt>Iniciado por</dt><dd>${padre ? `${esc(padre.nombre)} (PID ${padre.pid})` : `PID ${p.ppid} (ya terminó)`}</dd>
-      <dt>Hora de inicio</dt><dd>${p.inicio_ms ? `${new Date(p.inicio_ms).toLocaleString("es")} (hace ${duracion(ultima.ts - p.inicio_ms)})` : "–"}</dd>
-      <dt>CPU</dt><dd>${pct(p.cpu)}</dd>
-      <dt>Memoria</dt><dd>${bytes(p.memoria)} privada en RAM · ${bytes(p.memoria_fisica)} en RAM incluida la compartida · ${bytes(p.memoria_comprometida)} comprometida</dd>
-      <dt>Lectura / escritura</dt><dd>${porSeg(p.io_lectura_bps)} / ${porSeg(p.io_escritura_bps)} · total ${bytes(p.io_lectura_total)} / ${bytes(p.io_escritura_total)}</dd>
-      <dt>Hilos · manijas</dt><dd>${p.hilos} · ${p.manijas}</dd>
-    </dl>
-    ${explicacion}
-    <h3 class="bloque">Últimos minutos</h3>
-    <div class="leyenda bloque"><span><i style="background:var(--cpu)"></i>CPU</span><span><i style="background:var(--mem)"></i>Memoria</span></div>
-    <canvas id="g-detalle-cpu" class="bloque"></canvas>
-    <canvas id="g-detalle-mem" class="bloque"></canvas>`;
+  const clave = elegido.pid + ":" + elegido.inicio;
+  if (!p) { cuerpo.innerHTML = `<p class="suave">Este proceso ya terminó.</p>`; claveDetalle = null; return; }
+  // El esqueleto (con los gráficos) se arma solo al cambiar de proceso: así
+  // los gráficos no parpadean cada 2 s.
+  if (clave !== claveDetalle) {
+    claveDetalle = clave;
+    cuerpo.innerHTML = `<div id="detalle-info"></div>
+      <h3 class="bloque">Últimos minutos</h3>
+      <div class="leyenda bloque"><span><i style="background:var(--cpu)"></i>CPU</span><span><i style="background:var(--mem)"></i>Memoria</span></div>
+      <canvas id="g-detalle-cpu" class="bloque"></canvas>
+      <canvas id="g-detalle-mem" class="bloque"></canvas>`;
+  }
+  // Si el usuario está seleccionando texto del panel (p. ej. para copiar la
+  // ruta), no se reemplaza el contenido.
+  const sel = window.getSelection();
+  const seleccionando = sel && !sel.isCollapsed && $("#detalle").contains(sel.anchorNode);
+  if (!seleccionando) {
+    const padre = ultima.procesos.find((x) => x.pid === p.ppid);
+    let explicacion = "";
+    if (p.acceso_limitado) explicacion = `<p class="explicacion chico">Windows no deja leer la ruta de este proceso sin permisos de administrador. Suele tratarse de un componente protegido del sistema.</p>`;
+    else if (!p.empresa) explicacion = `<p class="explicacion chico">El ejecutable no declara empresa ni descripción. No es necesariamente malo (muchas herramientas de desarrollo no lo hacen), pero si no lo reconoces, revisa la ruta.</p>`;
+    $("#detalle-info").innerHTML = `
+      <h3 class="bloque">${esc(p.descripcion || p.nombre)}</h3>
+      <dl>
+        <dt>Ejecutable</dt><dd>${esc(p.nombre)}</dd>
+        <dt>Empresa</dt><dd>${esc(p.empresa || "No declarada")}</dd>
+        <dt>Descripción</dt><dd>${esc(p.descripcion || "No declarada")}</dd>
+        <dt>Ruta</dt><dd>${esc(p.ruta || "No disponible")}</dd>
+        <dt>PID</dt><dd>${p.pid}</dd>
+        <dt>Iniciado por</dt><dd>${padre ? `${esc(padre.nombre)} (PID ${padre.pid})` : `PID ${p.ppid} (ya terminó)`}</dd>
+        <dt>Hora de inicio</dt><dd>${p.inicio_ms ? `${new Date(p.inicio_ms).toLocaleString("es")} (hace ${duracion(ultima.ts - p.inicio_ms)})` : "–"}</dd>
+        <dt>CPU</dt><dd>${pct(p.cpu)}</dd>
+        <dt>Memoria</dt><dd>${bytes(p.memoria)} privada en RAM · ${bytes(p.memoria_fisica)} en RAM incluida la compartida · ${bytes(p.memoria_comprometida)} comprometida</dd>
+        <dt>Lectura / escritura</dt><dd>${porSeg(p.io_lectura_bps)} / ${porSeg(p.io_escritura_bps)} · total ${bytes(p.io_lectura_total)} / ${bytes(p.io_escritura_total)}</dd>
+        <dt>Hilos · manijas</dt><dd>${p.hilos} · ${p.manijas}</dd>
+      </dl>
+      ${explicacion}`;
+  }
+  // Cada pedido lleva un número; si al volver ya hay uno más nuevo (o se
+  // eligió otro proceso), la respuesta se descarta.
+  const numero = ++pedidoDetalle;
   try {
     const d = await api(`/api/proceso?pid=${p.pid}&inicio=${p.inicio_ms || 0}`);
-    const c1 = $("#g-detalle-cpu"), c2 = $("#g-detalle-mem");
-    if (c1) miniGrafico(c1, [{ valores: d.serie.map((x) => x.cpu), color: "--cpu", area: true }]);
-    if (c2) miniGrafico(c2, [{ valores: d.serie.map((x) => x.memoria), color: "--mem", area: true }]);
+    if (numero !== pedidoDetalle || clave !== claveDetalle) return;
+    miniGrafico($("#g-detalle-cpu"), [{ valores: d.serie.map((x) => x.cpu), color: "--cpu", area: true }]);
+    miniGrafico($("#g-detalle-mem"), [{ valores: d.serie.map((x) => x.memoria), color: "--mem", area: true }]);
   } catch (e) { console.warn(e); }
 }
 
@@ -643,14 +688,28 @@ $("#momento-elegido").onchange = (e) => {
   if (!isNaN(ts)) { cargarHistorial(ts); elegirMomento(ts); }
 };
 async function elegirMomento(ts) {
+  // En rangos largos cada punto del gráfico resume varios minutos (desde su
+  // `ts` hasta el siguiente). Se toma el punto más cercano al clic y se busca
+  // el minuto guardado dentro de ese intervalo.
+  let centro = ts, radio = 600000;
+  if (linea.length) {
+    // Mismo cálculo que el servidor: minutos del rango / 400 puntos.
+    const { desde, hasta } = rangoActual;
+    const paso = Math.max(1, Math.ceil(Math.floor((hasta - desde) / 60000) / 400)) * 60000;
+    const cercano = linea.reduce((a, b) => (Math.abs(b.ts + paso / 2 - ts) < Math.abs(a.ts + paso / 2 - ts) ? b : a));
+    if (Math.abs(cercano.ts + paso / 2 - ts) <= paso * 2) { centro = cercano.ts + paso / 2; radio = paso / 2 + 60000; }
+  }
   momentoTs = ts; dibujarHistorial();
   const caja = $("#momento");
   let d = null;
-  try { d = await api(`/api/historial/momento?ts=${Math.round(ts)}`); } catch (e) { console.warn(e); }
+  try { d = await api(`/api/historial/momento?ts=${Math.round(centro)}&radio=${Math.round(radio)}`); } catch (e) { console.warn(e); }
   if (!d) { caja.innerHTML = `<div class="vacio">No hay datos cerca de ${hora(ts, true)} (Vigía no estaba abierto).</div>`; return; }
   const s = d.sistema;
+  // «(otros)» junta cientos de apps pequeñas: va al final, no compite.
+  const otros = d.apps.find((a) => a.nombre === "(otros)");
   const tabla = (apps, campo, fmt) => `<table><thead><tr><th>Aplicación</th><th class="num">${campo === "cpu_prom" ? "CPU" : "Memoria"}</th></tr></thead><tbody>${
-    apps.slice().sort((a, b) => b[campo] - a[campo]).slice(0, 10).map((a) => `<tr title="${esc(a.ruta || "")}"><td class="nombre-app recorte">${esc(a.nombre)}${a.descripcion ? `<small>${esc(a.descripcion)}</small>` : ""}</td><td class="num">${fmt(a[campo])}</td></tr>`).join("")}</tbody></table>`;
+    apps.filter((a) => a.nombre !== "(otros)").sort((a, b) => b[campo] - a[campo]).slice(0, 10).map((a) => `<tr title="${esc(a.ruta || "")}"><td class="nombre-app recorte">${esc(a.nombre)}${a.descripcion ? `<small>${esc(a.descripcion)}</small>` : ""}</td><td class="num">${fmt(a[campo])}</td></tr>`).join("")}
+    ${otros ? `<tr class="suave"><td>Todas las demás (${esc(otros.descripcion || "")})</td><td class="num">${fmt(otros[campo])}</td></tr>` : ""}</tbody></table>`;
   caja.innerHTML = `<div class="fila entre"><h3>Qué consumía más el ${new Date(s.ts).toLocaleString("es", { dateStyle: "full", timeStyle: "short" })}</h3>
     <span class="suave chico">Sistema: CPU ${pct(s.cpu_prom)} (máx. ${pct(s.cpu_max)}) · Memoria ${bytes(s.mem_prom)} de ${bytes(s.mem_total)} · Red ↓ ${porSeg(s.red_rx)} ↑ ${porSeg(s.red_tx)}</span></div>
     <div class="dos-col bloque"><div>${tabla(d.apps, "cpu_prom", pct)}</div><div>${tabla(d.apps, "mem_prom", bytes)}</div></div>`;
@@ -898,7 +957,11 @@ async function arrancar() {
   const inicial = location.hash.slice(1);
   irA(VISTAS.some(([v]) => v === inicial) ? inicial : "ahora");
   if (!TOKEN) { mostrarSinToken(); return; }
-  try { pidVigia = (await api("/api/estado")).pid; } catch (e) { return; }
+  // Si Vigía todavía no responde, se reintenta cada 3 s.
+  for (;;) {
+    try { pidVigia = (await api("/api/estado")).pid; break; }
+    catch (e) { if (sinToken) return; await new Promise((r) => setTimeout(r, 3000)); }
+  }
   await actualizarAhora();
   // Se actualiza cada 2 s, solo mientras la pestaña está visible.
   setInterval(() => { if (!document.hidden && vista === "ahora") actualizarAhora(); }, 2000);

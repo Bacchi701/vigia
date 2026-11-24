@@ -336,6 +336,26 @@ fn clave_raiz(raiz: &str) -> String {
 }
 
 /// Guarda un análisis y deja solo los últimos `ANALISIS_POR_RAIZ` de esa raíz.
+/// Borra los análisis más viejos mientras en total ocupen más de
+/// `max_bytes` (siempre conserva el más reciente). Devuelve cuántos borró.
+pub fn limitar(conn: &Connection, max_bytes: u64) -> Resultado<usize> {
+    let mut borrados = 0;
+    loop {
+        let (ocupado, cantidad): (i64, i64) = conn.query_row(
+            "SELECT COALESCE(SUM(LENGTH(datos)), 0), COUNT(*) FROM analisis_disco",
+            [],
+            |f| Ok((f.get(0)?, f.get(1)?)),
+        )?;
+        if ocupado as u64 <= max_bytes || cantidad <= 1 {
+            return Ok(borrados);
+        }
+        borrados += conn.execute(
+            "DELETE FROM analisis_disco WHERE id = (SELECT MIN(id) FROM analisis_disco)",
+            [],
+        )?;
+    }
+}
+
 pub fn guardar(conn: &Connection, a: &Analisis) -> Resultado<i64> {
     let datos = serde_json::to_string(a)?;
     conn.execute(

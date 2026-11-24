@@ -1,7 +1,9 @@
 //! Red: bytes por adaptador y tabla de conexiones por proceso.
 
 use super::{Resultado, desde_utf16};
-use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
+use windows::Win32::NetworkManagement::IpHelper::{
+    FreeMibTable, GetIfTable2, MIB_IF_ROW2, MIB_IF_TABLE2,
+};
 use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 
 /// Un adaptador de red físico con sus contadores acumulados.
@@ -34,7 +36,10 @@ pub fn adaptadores() -> Resultado<Vec<Adaptador>> {
     // `from_raw_parts` crea un slice de Rust sobre esa memoria de Windows.
     let filas = unsafe {
         let n = (*tabla).NumEntries as usize;
-        std::slice::from_raw_parts((*tabla).Table.as_ptr(), n)
+        // `Table` está declarada como un arreglo de 1 elemento (estilo C);
+        // tomamos la dirección del campo completo para que el puntero
+        // "pueda" recorrer las n filas que Windows puso a continuación.
+        std::slice::from_raw_parts((&raw const (*tabla).Table).cast::<MIB_IF_ROW2>(), n)
     };
     let mut lista = Vec::new();
     for fila in filas {

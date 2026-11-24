@@ -271,3 +271,37 @@ fn inicio_conexiones_y_avisos_por_la_api() {
     assert_eq!(p.json("/api/avisos")["sin_ver"], 0);
     drop((l, l2));
 }
+
+#[test]
+fn parametros_extremos_no_rompen_el_servidor() {
+    let p = Prueba::nueva();
+    for ruta in [
+        "/api/historial/linea?hasta=-9223372036854775808",
+        "/api/historial/linea?desde=9223372036854775807&hasta=-9223372036854775808",
+        "/api/apps?hasta=-9223372036854775808",
+        "/api/historial/momento?ts=9223372036854775807",
+    ] {
+        assert_eq!(p.get(ruta).estado, 200, "{ruta}");
+    }
+    // El servidor sigue respondiendo.
+    assert_eq!(p.get("/api/estado").estado, 200);
+}
+
+#[test]
+fn un_cliente_sin_token_que_no_envia_el_cuerpo_no_bloquea() {
+    use std::io::Write;
+    let p = Prueba::nueva();
+    let puerto = p.app().puerto();
+    // Anuncia 60 KB de cuerpo y no envía nada.
+    let mut lento = std::net::TcpStream::connect(("127.0.0.1", puerto)).unwrap();
+    write!(
+        lento,
+        "POST /api/apagar HTTP/1.1\r\nHost: 127.0.0.1:{puerto}\r\nContent-Length: 60000\r\n\r\n"
+    )
+    .unwrap();
+    // Otras peticiones siguen funcionando.
+    let inicio = Instant::now();
+    assert_eq!(p.get("/api/estado").estado, 200);
+    assert!(inicio.elapsed() < Duration::from_secs(5));
+    drop(lento);
+}

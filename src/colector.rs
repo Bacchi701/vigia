@@ -157,7 +157,9 @@ impl Colector {
             .instante_anterior
             .map(|t| ahora.duration_since(t).as_secs_f64())
             .filter(|s| *s > 0.0);
-        self.instante_anterior = Some(ahora);
+        // Ojo: `instante_anterior` se actualiza al final, solo si la muestra
+        // salió bien. Si se actualizara aquí y luego fallara la lista de
+        // procesos, la próxima muestra dividiría 4 s de CPU por 2 s.
 
         // --- CPU total ---
         let cpu_ahora = win::sistema::tiempos_cpu()?;
@@ -198,6 +200,7 @@ impl Colector {
             }
         }
 
+        self.instante_anterior = Some(ahora);
         Ok(Muestra {
             ts,
             sistema: Sistema {
@@ -306,6 +309,8 @@ impl Colector {
 
     fn muestrear_red(&mut self, segundos: Option<f64>) -> Vec<Adaptador> {
         let Ok(lista) = win::red::adaptadores() else {
+            // Sin lectura no hay con qué comparar la próxima vez.
+            self.red_anterior.clear();
             return Vec::new();
         };
         let mut salida = Vec::with_capacity(lista.len());

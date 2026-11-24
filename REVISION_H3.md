@@ -1,34 +1,34 @@
 # Revisión de H3 (subagente revisor, sin ver el código antes)
 
-Hallazgos y qué se hizo con cada uno. Estado: ✔ corregido · ✗ no se corrige (motivo) · … pendiente.
+Hallazgos y qué se hizo con cada uno. ✔ corregido · ✗ no se corrige (con motivo).
 
 ## Errores reales (colector, historial, servidor)
-- A1 … `PRAGMA incremental_vacuum` con `execute_batch` solo libera una página por llamada: el archivo nunca se encoge. Recorrer todas las filas.
-- A2 … El tope de tamaño mide toda la base (incluidos análisis de disco) pero solo borra historial: podría vaciar el historial. Medir/limitar aparte, cortar si borrar no ayuda, podar `apps` huérfanas.
-- A3 … `INSERT OR REPLACE` de un minuto incompleto pisa el anterior (reinicio en el mismo minuto, reloj que retrocede).
-- A4 … Si una muestra falla, `instante_anterior` ya se actualizó y la siguiente tasa sale al doble.
-- A5 … El servidor lee el cuerpo antes de validar: un cliente local lento bloquea el único hilo y el cierre. `--detener` dice «se cerró» aunque no se confirme.
-- A6 … Dos arranques muy seguidos pueden crear dos instancias (falta un bloqueo atómico).
-- A7 … Desbordamiento de i64 con parámetros extremos en la URL.
+- A1 ✔ `PRAGMA incremental_vacuum` con `execute_batch` liberaba una sola página: ahora se recorren todas sus filas. Prueba `la_retencion_achica_el_archivo_de_verdad` (el número de páginas del archivo baja a menos de la mitad).
+- A2 ✔ Los análisis de disco tienen su propio tope (¼ del tope total, `disco::limitar`); el bucle de retención se corta si borrar historial ya no achica la base; se borran las `apps` huérfanas. Prueba `los_analisis_de_disco_no_obligan_a_borrar_historial`.
+- A3 ✔ Un minuto ya guardado se **combina** ponderando por muestras (antes se pisaba). Si el reloj retrocede, no se reabre un minuto cerrado. Pruebas `reinicio_dentro_del_mismo_minuto_combina_en_vez_de_pisar` y `reloj_que_retrocede_no_reabre_un_minuto_cerrado`.
+- A4 ✔ `instante_anterior` se actualiza solo si la muestra salió bien; si falla la lectura de red se olvida la referencia.
+- A5 ✔ Host/Origin/token se validan **antes** de leer el cuerpo, que solo se lee en POST; cada petición se atiende en su propio hilo (máx. 16). `--detener` ahora informa y devuelve 1 si no se confirma el cierre. Prueba `un_cliente_sin_token_que_no_envia_el_cuerpo_no_bloquea`.
+- A6 ✔ Instancia única con un mutex con nombre (`CreateMutexW`, atómico) por carpeta de datos. Prueba `dos_arranques_simultaneos_dejan_una_sola_instancia`.
+- A7 ✔ Los números de la URL se limitan a ±2^52. Prueba `parametros_extremos_no_rompen_el_servidor`.
 
-## Interfaz
-- B1 … «Agrupar por aplicación» + clic abre «Este proceso ya terminó».
-- B2 … El panel de detalle se reconstruye cada 2 s (pierde selección, parpadea, respuestas desordenadas).
-- B3 … La tabla se reconstruye cada 2 s (pierde foco).
-- B4 … En rangos de 7/30 días, el clic en el gráfico suele dar «No hay datos».
-- B5 … «Tiempo activa» solo cuenta minutos entre las que más consumían.
-- B6 … La fila «(otros)» encabeza «Qué consumía más».
-- B7 … La interfaz no avisa si Vigía se cerró; si `/api/estado` falla al inicio, no reintenta.
-- B8 … La primera muestra (tasas en 0) entra al historial.
+## Interfaz (verificado en el navegador con la versión release)
+- B1 ✔ La fila agrupada toma PID, inicio y ruta del proceso más antiguo del grupo: el detalle lo encuentra y la fila queda resaltada.
+- B2 ✔ El panel se arma una vez por proceso (los gráficos ya no parpadean), no se reemplaza mientras hay texto seleccionado, y las respuestas viejas se descartan.
+- B3 ✔ La tabla no se redibuja con un botón del ratón apretado y devuelve el foco del teclado a la misma fila.
+- B4 ✔ `momento` acepta un radio; la interfaz busca dentro del intervalo del punto más cercano. Probado con el rango de 30 días.
+- B5 ✔ La columna se llama «Minutos destacada», con una explicación al pasar el ratón.
+- B6 ✔ «(otros)» va al final como «Todas las demás».
+- B7 ✔ Franja roja «Sin conexión con Vigía» cuando falla la conexión; al arrancar se reintenta cada 3 s.
+- B8 ✔ La primera muestra (tasas en 0) solo sirve de referencia y no se registra. ✗ Los procesos nuevos siguen mostrando 0 % en su primera muestra: no hay lectura anterior con qué comparar, y es lo mismo que hace el Administrador de tareas.
 
 ## Solidez del `unsafe`
-- C1 … `from_raw_parts` desde `Table.as_ptr()` de un arreglo de 1 elemento (procedencia de punteros).
-- C2 … `ImageName.Buffer` no se valida contra el búfer.
-- C3 … Recorrido limitado por capacidad y no por bytes escritos.
-- C4 … Posible cuadro «No hay disco» en lectores vacíos (`SetErrorMode`).
-- C5 … Bloque de versión `Vec<u8>` sin alineación garantizada.
+- C1 ✔ El slice de filas se construye desde la dirección del campo completo (`&raw const`).
+- C2 ✔ Se comprueba que el nombre del proceso cae dentro del búfer.
+- C3 ✔ El recorrido se limita a los bytes que Windows dice haber escrito.
+- C4 ✔ `SetErrorMode(SEM_FAILCRITICALERRORS)` al iniciar (solo afecta a este proceso).
+- C5 ✔ El bloque de versión se reserva como `u32` (alineado a 4).
 
 ## Sugerencias
-- Caché de letras de unidad en `dispositivo_a_dos`.
-- `/api/ahora` envía ~200 KB cada 2 s.
-- Esperar el hilo de disco al cerrar.
+- ✔ Caché (60 s) de la tabla letra → dispositivo.
+- ✗ `/api/ahora` sigue enviando la muestra completa: el consumo se mide en H7 y se decide con ese dato.
+- ✗ El hilo de análisis de disco no se espera al cerrar: se le pide cancelar y revisa esa orden en cada carpeta; esperar podría demorar el cierre si una carpeta tarda en listarse.

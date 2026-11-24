@@ -73,3 +73,37 @@ fn inicia_responde_y_se_detiene_con_detener() {
     assert!(!estado.exists());
     assert!(datos.join("vigia.db").exists());
 }
+
+#[test]
+fn dos_arranques_simultaneos_dejan_una_sola_instancia() {
+    let datos = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("arranque_doble");
+    let _ = std::fs::remove_file(datos.join("vigia_estado.json"));
+    let d = datos.to_string_lossy().to_string();
+    let args = ["--sin-navegador", "--puerto", "0", "--datos", d.as_str()];
+    let mut a = Hijo(exe().args(args).spawn().unwrap());
+    let mut b = Hijo(exe().args(args).spawn().unwrap());
+
+    // La que no obtuvo el bloqueo debe terminar sola (con código 0).
+    let limite = Instant::now() + Duration::from_secs(15);
+    let (viva, terminada) = loop {
+        let fa = a.0.try_wait().unwrap();
+        let fb = b.0.try_wait().unwrap();
+        match (fa, fb) {
+            (Some(c), None) => break (&mut b, c),
+            (None, Some(c)) => break (&mut a, c),
+            (Some(_), Some(_)) => panic!("terminaron las dos"),
+            (None, None) => {}
+        }
+        assert!(Instant::now() < limite, "siguen las dos en marcha");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert!(terminada.success());
+    // La que quedó se detiene con --detener.
+    let salida = exe().args(["--detener", "--datos", &d]).output().unwrap();
+    assert!(salida.status.success(), "{salida:?}");
+    let limite = Instant::now() + Duration::from_secs(10);
+    while viva.0.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < limite, "no se cerró");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}

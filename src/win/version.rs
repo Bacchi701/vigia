@@ -26,7 +26,12 @@ pub fn leer(ruta: &str) -> InfoVersion {
     if tam == 0 {
         return InfoVersion::default();
     }
-    let mut bloque = vec![0u8; tam as usize];
+    // Se reserva como `u32` para garantizar alineación a 4 bytes (las
+    // estructuras del recurso de versión la necesitan) y se ve como bytes.
+    let mut almacen = vec![0u32; (tam as usize).div_ceil(4)];
+    // SAFETY: `almacen` tiene al menos `tam` bytes y vive más que `bloque`.
+    let bloque: &mut [u8] =
+        unsafe { std::slice::from_raw_parts_mut(almacen.as_mut_ptr().cast::<u8>(), tam as usize) };
     // GetFileVersionInfoW (version.dll): copia el recurso completo al búfer.
     if unsafe {
         GetFileVersionInfoW(
@@ -45,7 +50,7 @@ pub fn leer(ruta: &str) -> InfoVersion {
     // preguntamos cuáles hay en "\VarFileInfo\Translation"; si no hay,
     // probamos con inglés de EE. UU. en Unicode (0409/04B0), lo más común.
     let mut traducciones = vec![(0x0409u16, 0x04B0u16)];
-    if let Some(bytes) = consultar(&bloque, "\\VarFileInfo\\Translation", false) {
+    if let Some(bytes) = consultar(bloque, "\\VarFileInfo\\Translation", false) {
         let pares: Vec<(u16, u16)> = bytes
             .as_chunks::<4>()
             .0
@@ -64,7 +69,7 @@ pub fn leer(ruta: &str) -> InfoVersion {
     let texto = |campo: &str| -> Option<String> {
         traducciones.iter().find_map(|(idioma, pagina)| {
             let clave = format!("\\StringFileInfo\\{idioma:04x}{pagina:04x}\\{campo}");
-            let bytes = consultar(&bloque, &clave, true)?;
+            let bytes = consultar(bloque, &clave, true)?;
             let utf16: Vec<u16> = bytes
                 .as_chunks::<2>()
                 .0
