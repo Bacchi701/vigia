@@ -697,6 +697,114 @@ pub fn momento(conn: &Connection, ts: i64, radio_ms: i64) -> Resultado<Option<Mo
     Ok(Some(Momento { sistema, apps }))
 }
 
+/// Un momento de carga alta para el resumen semanal.
+#[derive(Debug, Clone, Serialize)]
+pub struct Pico {
+    pub ts: i64,
+    pub cpu_prom: f64,
+    pub mem_prom: u64,
+    pub mem_total: u64,
+    /// La aplicación que más consumía (CPU o memoria, según el pico).
+    pub app: Option<String>,
+    pub app_valor: f64,
+}
+
+/// Resumen de un período (pensado para la última semana).
+#[derive(Debug, Clone, Serialize)]
+pub struct Resumen {
+    pub desde: i64,
+    pub hasta: i64,
+    pub minutos: i64,
+    pub cpu_prom: f64,
+    pub mem_prom: u64,
+    pub top_cpu: Vec<UsoApp>,
+    pub top_memoria: Vec<UsoApp>,
+    pub picos_cpu: Vec<Pico>,
+    pub picos_memoria: Vec<Pico>,
+}
+
+/// Separación mínima entre dos picos: si no, los 5 "momentos de mayor
+/// carga" serían 5 minutos seguidos de la misma tarde.
+const SEPARACION_PICOS_MS: i64 = 60 * MINUTO_MS;
+
+/// Aplicaciones que más consumieron y momentos de mayor carga en
+/// `[desde, hasta)`.
+pub fn resumen(conn: &Connection, desde: i64, hasta: i64) -> Resultado<Resumen> {
+    let minutos = minutos_con_datos(conn, desde, hasta)?;
+    let (cpu_prom, mem_prom): (Option<f64>, Option<f64>) = conn.query_row(
+        "SELECT AVG(cpu_prom), AVG(mem_prom) FROM minuto_sistema WHERE ts >= ?1 AND ts < ?2",
+        [desde, hasta],
+        |f| Ok((f.get(0)?, f.get(1)?)),
+    )?;
+    Ok(Resumen {
+        desde,
+        hasta,
+        minutos,
+        cpu_prom: cpu_prom.unwrap_or(0.0),
+        mem_prom: mem_prom.unwrap_or(0.0) as u64,
+        top_cpu: top_apps(conn, desde, hasta, Orden::Cpu, 10)?,
+        top_memoria: top_apps(conn, desde, hasta, Orden::Memoria, 10)?,
+        picos_cpu: picos(conn, desde, hasta, "cpu_prom", "m.cpu_prom")?,
+        picos_memoria: picos(conn, desde, hasta, "mem_prom", "m.mem_prom")?,
+    })
+}
+
+/// Los 5 minutos con más carga (separados al menos una hora) y la app que
+/// más consumía en cada uno. `columna` y `columna_app` son nombres fijos
+/// del código (nunca vienen del usuario), por eso se pueden insertar en el SQL.
+fn picos(
+    conn: &Connection,
+    desde: i64,
+    hasta: i64,
+    columna: &str,
+    columna_app: &str,
+) -> Resultado<Vec<Pico>> {
+    let mut st = conn.prepare(&format!(
+        "SELECT ts, cpu_prom, mem_prom, mem_total FROM minuto_sistema
+         WHERE ts >= ?1 AND ts < ?2 ORDER BY {columna} DESC LIMIT 500"
+    ))?;
+    let candidatos = st
+        .query_map([desde, hasta], |f| {
+            Ok(Pico {
+                ts: f.get(0)?,
+                cpu_prom: f.get(1)?,
+                mem_prom: f.get::<_, i64>(2)? as u64,
+                mem_total: f.get::<_, i64>(3)? as u64,
+                app: None,
+                app_valor: 0.0,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut elegidos: Vec<Pico> = Vec::new();
+    for c in candidatos {
+        if elegidos
+            .iter()
+            .all(|e| (e.ts - c.ts).abs() >= SEPARACION_PICOS_MS)
+        {
+            elegidos.push(c);
+            if elegidos.len() == 5 {
+                break;
+            }
+        }
+    }
+    let mut st = conn.prepare(&format!(
+        "SELECT a.nombre, {columna_app} FROM minuto_app m JOIN apps a ON a.id = m.app_id
+         WHERE m.ts = ?1 AND a.nombre <> ?2 ORDER BY {columna_app} DESC LIMIT 1"
+    ))?;
+    for p in &mut elegidos {
+        if let Some((nombre, valor)) = st
+            .query_row(params![p.ts, OTROS], |f| {
+                Ok((f.get::<_, String>(0)?, f.get::<_, f64>(1)?))
+            })
+            .optional()?
+        {
+            p.app = Some(nombre);
+            p.app_valor = valor;
+        }
+    }
+    Ok(elegidos)
+}
+
 #[cfg(test)]
 pub(crate) mod pruebas {
     use super::*;
@@ -743,6 +851,7 @@ pub(crate) mod pruebas {
             procesos,
             unidades: vec![],
             adaptadores: vec![],
+            bateria: None,
         }
     }
 
@@ -1038,5 +1147,52 @@ mod pruebas_revision {
             .query_row("SELECT COUNT(*) FROM analisis_disco", [], |f| f.get(0))
             .unwrap();
         assert!((1..40).contains(&analisis));
+    }
+}
+
+#[cfg(test)]
+mod pruebas_resumen {
+    use super::pruebas::{proceso, simular};
+    use super::*;
+
+    #[test]
+    fn resumen_semanal_con_picos_separados() {
+        let mut conn = base::en_memoria().unwrap();
+        let mut h = Historial::new(10);
+        let inicio = minuto_de(1_790_000_000_000);
+        // 3 horas: compilar.exe al 90 % entre los minutos 30 y 40, y al
+        // 70 % entre 130 y 135; el resto, editor.exe al 5 %.
+        simular(&mut conn, &mut h, inicio, 180, |ts| {
+            let min = (ts - inicio) / MINUTO_MS;
+            let mut v = vec![proceso(1, "editor.exe", 5.0, 400)];
+            if (30..40).contains(&min) {
+                v.push(proceso(2, "compilar.exe", 90.0, 100));
+            }
+            if (130..135).contains(&min) {
+                v.push(proceso(2, "compilar.exe", 70.0, 100));
+            }
+            v
+        });
+        let r = resumen(&conn, inicio, inicio + 180 * MINUTO_MS).unwrap();
+        assert_eq!(r.minutos, 179);
+        assert_eq!(r.top_cpu[0].nombre, "compilar.exe");
+        assert_eq!(r.top_memoria[0].nombre, "editor.exe");
+        // Dos picos de CPU separados más de una hora, el mayor primero.
+        assert!(r.picos_cpu.len() >= 2);
+        let p0 = &r.picos_cpu[0];
+        let p1 = &r.picos_cpu[1];
+        assert!((30..40).contains(&((p0.ts - inicio) / MINUTO_MS)));
+        assert!((130..135).contains(&((p1.ts - inicio) / MINUTO_MS)));
+        assert_eq!(p0.app.as_deref(), Some("compilar.exe"));
+        assert!((p0.app_valor - 90.0).abs() < 1e-9);
+        assert!(
+            r.picos_cpu
+                .windows(2)
+                .all(|w| (w[0].ts - w[1].ts).abs() >= SEPARACION_PICOS_MS)
+        );
+        // Período sin datos: todo vacío, sin errores.
+        let vacio = resumen(&conn, inicio - DIA_MS, inicio).unwrap();
+        assert_eq!(vacio.minutos, 0);
+        assert!(vacio.picos_cpu.is_empty() && vacio.top_cpu.is_empty());
     }
 }

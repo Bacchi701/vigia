@@ -10,6 +10,7 @@
 #![allow(unsafe_code)]
 
 pub mod archivos;
+pub mod notificacion;
 pub mod proceso;
 pub mod red;
 pub mod registro;

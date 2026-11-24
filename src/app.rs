@@ -85,6 +85,18 @@ impl Estado {
     /// todos los avisos (reglas, inicio, puertos).
     pub fn emitir_aviso(&self, ts: i64, tipo: &str, titulo: &str, detalle: &str) -> Resultado<()> {
         crate::avisos::registrar(&bloquear(&self.base), ts, tipo, titulo, detalle)?;
+        if bloquear(&self.reglas).notificar_windows {
+            // La ventana de notificación tiene su propio bucle de mensajes,
+            // así que vive en un hilo aparte y no frena al colector.
+            let (t, d) = (titulo.to_string(), detalle.to_string());
+            let _ = std::thread::Builder::new()
+                .name("notificacion".into())
+                .spawn(move || {
+                    if let Err(e) = win::notificacion::mostrar(&t, &d, 8000) {
+                        eprintln!("[vigía] no se pudo mostrar la notificación: {e}");
+                    }
+                });
+        }
         Ok(())
     }
 

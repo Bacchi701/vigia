@@ -388,6 +388,40 @@ fn api(p: &Peticion, estado: &Arc<Estado>) -> Resultado<Respuesta> {
                 "sin_ver": crate::avisos::sin_ver(&conn)?,
             }))
         }
+        ("GET", "/api/resumen") => {
+            let hasta = num("hasta", ahora)?;
+            let desde = num("desde", hasta - 7 * historial::DIA_MS)?;
+            Respuesta::json(&historial::resumen(&bloquear(&estado.base), desde, hasta)?)
+        }
+        ("GET", "/api/exportar") => {
+            let hasta = num("hasta", ahora)?;
+            let desde = num("desde", hasta - 7 * historial::DIA_MS)?;
+            let tipo = match p.consulta.get("tipo").map(String::as_str) {
+                Some("apps") => crate::exportar::Tipo::Aplicaciones,
+                _ => crate::exportar::Tipo::Sistema,
+            };
+            let csv = crate::exportar::csv(&bloquear(&estado.base), tipo, desde, hasta, |ms| {
+                crate::win::sistema::hora_local(ms).unwrap_or_else(|| ms.to_string())
+            })?;
+            let nombre = format!(
+                "vigia_{}_{}.csv",
+                if tipo == crate::exportar::Tipo::Sistema {
+                    "sistema"
+                } else {
+                    "aplicaciones"
+                },
+                crate::win::sistema::hora_local(hasta)
+                    .unwrap_or_default()
+                    .get(..10)
+                    .unwrap_or("")
+            );
+            Respuesta {
+                estado: 200,
+                tipo: "text/csv; charset=utf-8",
+                cuerpo: csv.into_bytes(),
+                descarga: Some(nombre),
+            }
+        }
         ("GET", "/api/reglas") => Respuesta::json(&*bloquear(&estado.reglas)),
         ("POST", "/api/reglas") => {
             let nuevas: crate::avisos::Reglas = serde_json::from_str(&p.cuerpo)

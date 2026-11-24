@@ -84,6 +84,8 @@ pub struct Muestra {
     pub procesos: Vec<Proceso>,
     pub unidades: Vec<Unidad>,
     pub adaptadores: Vec<Adaptador>,
+    /// `None` si el equipo no tiene batería.
+    pub bateria: Option<win::sistema::Bateria>,
 }
 
 /// Lectura anterior de un proceso, para calcular diferencias.
@@ -121,6 +123,7 @@ pub struct Colector {
     /// archivo, así que se hace una sola vez por ruta.
     cache_version: HashMap<String, win::version::InfoVersion>,
     unidades: Vec<Unidad>,
+    bateria: Option<win::sistema::Bateria>,
     instante_unidades: Option<Instant>,
 }
 
@@ -142,6 +145,7 @@ impl Colector {
             red_anterior: HashMap::new(),
             cache_version: HashMap::new(),
             unidades: Vec::new(),
+            bateria: None,
             instante_unidades: None,
         }
     }
@@ -186,6 +190,7 @@ impl Colector {
             .is_none_or(|t| ahora.duration_since(t) >= INTERVALO_UNIDADES)
         {
             self.instante_unidades = Some(ahora);
+            self.bateria = win::sistema::bateria();
             if let Ok(lista) = win::sistema::unidades() {
                 self.unidades = lista
                     .into_iter()
@@ -216,6 +221,7 @@ impl Colector {
             procesos,
             unidades: self.unidades.clone(),
             adaptadores,
+            bateria: self.bateria.clone(),
         })
     }
 

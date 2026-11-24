@@ -153,6 +153,8 @@ tbody tr.elegido { background: var(--acento-suave); }
       <div class="panel tarjeta"><div class="titulo">Memoria en uso</div><div class="valor" id="v-mem">–</div><canvas id="g-mem"></canvas></div>
       <div class="panel tarjeta"><div class="titulo">Red: bajada / subida</div><div class="valor" id="v-red">–</div><canvas id="g-red"></canvas></div>
       <div class="panel tarjeta"><div class="titulo">Lectura y escritura de procesos</div><div class="valor" id="v-io">–</div><canvas id="g-io"></canvas></div>
+      <div class="panel tarjeta" id="tarjeta-bateria" style="display:none"><div class="titulo">Batería</div><div class="valor" id="v-bateria">–</div>
+        <div class="barra"><div id="b-bateria"></div></div><div class="suave chico" id="d-bateria" style="margin-top:6px"></div></div>
     </div>
     <div class="panel bloque">
       <div class="fila entre"><h3>Unidades</h3><span class="suave chico" id="adaptadores"></span></div>
@@ -200,6 +202,11 @@ tbody tr.elegido { background: var(--acento-suave); }
       <canvas id="grafico-historial" class="bloque"></canvas>
     </div>
     <div class="panel bloque" id="momento"><div class="vacio">Elige un momento en el gráfico.</div></div>
+    <div class="fila bloque">
+      <span class="suave chico">Exportar el rango elegido a CSV (para Excel):</span>
+      <button data-exportar="sistema">Totales del sistema por minuto</button>
+      <button data-exportar="apps">Uso por aplicación por minuto</button>
+    </div>
   </section>
 
   <!-- ===================== APLICACIONES ===================== -->
@@ -217,6 +224,21 @@ tbody tr.elegido { background: var(--acento-suave); }
       <th>Aplicación</th><th class="num">CPU promedio</th><th class="num">CPU máxima</th>
       <th class="num">Memoria promedio</th><th class="num">Memoria máxima</th><th class="num">Lectura y escritura</th><th class="num" title="Minutos en que la aplicación estuvo entre las que más consumían (las pequeñas se guardan juntas como «otras»)">Minutos destacada</th>
     </tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <!-- ===================== SEMANA ===================== -->
+  <section data-vista="semana">
+    <div class="fila entre"><h2>Resumen de los últimos 7 días</h2><span class="suave chico" id="semana-cobertura"></span></div>
+    <div class="tarjetas bloque" id="semana-tarjetas"></div>
+    <div class="panel bloque"><h3>Carga promedio por día</h3><canvas id="g-semana" class="bloque" style="width:100%;height:160px;display:block"></canvas></div>
+    <div class="dos-col bloque">
+      <div class="panel"><h3>Aplicaciones que más CPU usaron</h3><div id="semana-cpu" class="bloque"></div></div>
+      <div class="panel"><h3>Aplicaciones que más memoria usaron</h3><div id="semana-mem" class="bloque"></div></div>
+    </div>
+    <div class="dos-col bloque">
+      <div class="panel"><h3>Momentos de mayor uso de CPU</h3><div id="semana-picos-cpu" class="bloque"></div></div>
+      <div class="panel"><h3>Momentos de mayor uso de memoria</h3><div id="semana-picos-mem" class="bloque"></div></div>
+    </div>
   </section>
 
   <!-- ===================== DISCO ===================== -->
@@ -362,7 +384,7 @@ $("#boton-tema").onclick = () => aplicarTema(document.documentElement.dataset.te
 // Navegación entre vistas
 // =====================================================================
 const VISTAS = [
-  ["ahora", "Ahora"], ["historial", "Historial"], ["aplicaciones", "Aplicaciones"], ["disco", "Disco"], ["inicio", "Inicio"], ["conexiones", "Conexiones"], ["avisos", "Avisos"],
+  ["ahora", "Ahora"], ["historial", "Historial"], ["aplicaciones", "Aplicaciones"], ["semana", "Semana"], ["disco", "Disco"], ["inicio", "Inicio"], ["conexiones", "Conexiones"], ["avisos", "Avisos"],
 ];
 let vista = "ahora";
 function irA(v) {
@@ -449,6 +471,18 @@ function pintarAhora() {
       <span class="suave chico">${bytes(u.libre)} libres de ${bytes(u.total)}</span></div>
       <div class="barra ${p > 90 ? "alta" : ""}"><div style="width:${p.toFixed(1)}%"></div></div></div>`;
   }).join("") || `<span class="suave">Sin unidades.</span>`;
+  // Batería (solo si el equipo tiene).
+  const b = ultima.bateria;
+  $("#tarjeta-bateria").style.display = b ? "" : "none";
+  if (b) {
+    $("#v-bateria").textContent = b.porcentaje != null ? `${b.porcentaje} %` : "–";
+    $("#b-bateria").style.width = `${b.porcentaje ?? 0}%`;
+    $("#b-bateria").parentElement.classList.toggle("alta", (b.porcentaje ?? 100) < 15 && !b.enchufado);
+    const partes = [b.cargando ? "Cargando" : b.enchufado ? "Enchufado" : "Con batería"];
+    if (b.segundos_restantes != null && !b.enchufado) partes.push(`quedan ~${duracion(b.segundos_restantes * 1000)}`);
+    if (b.ahorro) partes.push("ahorro de batería activado");
+    $("#d-bateria").textContent = partes.join(" · ");
+  }
   $("#adaptadores").textContent = ultima.adaptadores.filter((a) => a.conectado)
     .map((a) => `${a.nombre}: ↓ ${porSeg(a.rx_bps)} ↑ ${porSeg(a.tx_bps)}`).join(" · ");
 
@@ -715,6 +749,21 @@ async function elegirMomento(ts) {
     <div class="dos-col bloque"><div>${tabla(d.apps, "cpu_prom", pct)}</div><div>${tabla(d.apps, "mem_prom", bytes)}</div></div>`;
 }
 AL_ENTRAR.historial = () => cargarHistorial();
+// Exportar: la descarga se pide con fetch (para enviar el token) y se
+// entrega al navegador como un archivo.
+$$("[data-exportar]").forEach((b) => (b.onclick = async () => {
+  const { desde, hasta } = rangoActual;
+  try {
+    const r = await fetch(`/api/exportar?tipo=${b.dataset.exportar}&desde=${Math.round(desde)}&hasta=${Math.round(hasta)}`, { headers: { "X-Vigia-Token": TOKEN } });
+    if (!r.ok) throw new Error(r.statusText);
+    const nombre = (r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "vigia.csv";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(await r.blob());
+    a.download = nombre;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) { alert("No se pudo exportar: " + e.message); }
+}));
 
 // =====================================================================
 // Vista APLICACIONES
@@ -753,6 +802,88 @@ async function cargarApps() {
     ${barra(a, "io_prom", porSeg(a.io_prom))}<td class="num">${duracion(a.minutos * 60000)}</td></tr>`).join("");
 }
 AL_ENTRAR.aplicaciones = () => cargarApps();
+
+// =====================================================================
+// Vista SEMANA (resumen de los últimos 7 días)
+// =====================================================================
+let semanaDias = [];
+async function cargarSemana() {
+  const hasta = Date.now(), desde = hasta - 7 * 86400000;
+  let r, linea7;
+  try {
+    [r, linea7] = await Promise.all([
+      api(`/api/resumen?desde=${desde}&hasta=${hasta}`),
+      api(`/api/historial/linea?desde=${desde}&hasta=${hasta}&puntos=168`),
+    ]);
+  } catch (e) { return; }
+  $("#semana-cobertura").textContent = r.minutos
+    ? `Con datos de ${duracion(r.minutos * 60000)} (Vigía solo registra mientras está abierto).` : "";
+  if (!r.minutos) {
+    $("#semana-tarjetas").innerHTML = `<div class="panel vacio" style="grid-column:1/-1">Todavía no hay datos de esta semana.</div>`;
+  } else {
+    const pico = r.picos_cpu[0];
+    $("#semana-tarjetas").innerHTML = `
+      <div class="panel tarjeta"><div class="titulo">CPU promedio</div><div class="valor">${pct(r.cpu_prom)}</div></div>
+      <div class="panel tarjeta"><div class="titulo">Memoria promedio en uso</div><div class="valor">${bytes(r.mem_prom)}</div></div>
+      <div class="panel tarjeta"><div class="titulo">La que más CPU usó</div><div class="valor" style="font-size:18px">${esc(r.top_cpu[0]?.descripcion || r.top_cpu[0]?.nombre || "–")}</div></div>
+      <div class="panel tarjeta"><div class="titulo">Mayor carga</div><div class="valor" style="font-size:18px">${pico ? `${pct(pico.cpu_prom)} · ${hora(pico.ts, true)}` : "–"}</div></div>`;
+  }
+  const listaApps = (apps, campo, fmt) => apps.length ? `<table><tbody>${apps.map((a) => `<tr title="${esc(a.ruta || "")}">
+    <td class="nombre-app recorte">${esc(a.descripcion || a.nombre)}<small>${a.descripcion ? esc(a.nombre) : ""}</small></td>
+    <td class="num">${fmt(a[campo])}</td></tr>`).join("")}</tbody></table>` : `<p class="suave">Sin datos.</p>`;
+  $("#semana-cpu").innerHTML = listaApps(r.top_cpu, "cpu_prom", pct);
+  $("#semana-mem").innerHTML = listaApps(r.top_memoria, "mem_prom", bytes);
+  const listaPicos = (picos, cpu) => picos.length ? `<table><thead><tr><th>Cuándo</th><th class="num">${cpu ? "CPU" : "Memoria"}</th><th>Qué más consumía</th></tr></thead><tbody>${
+    picos.map((p) => `<tr data-ts="${p.ts}" title="Ver en el Historial"><td>${new Date(p.ts).toLocaleString("es", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
+      <td class="num">${cpu ? pct(p.cpu_prom) : bytes(p.mem_prom)}</td>
+      <td class="recorte">${esc(p.app || "–")}${p.app ? ` <span class="suave chico">${cpu ? pct(p.app_valor) : bytes(p.app_valor)}</span>` : ""}</td></tr>`).join("")}</tbody></table>`
+    : `<p class="suave">Sin datos.</p>`;
+  $("#semana-picos-cpu").innerHTML = listaPicos(r.picos_cpu, true);
+  $("#semana-picos-mem").innerHTML = listaPicos(r.picos_memoria, false);
+  // Clic en un pico: ir al Historial en ese momento.
+  $$("#semana-picos-cpu tr[data-ts], #semana-picos-mem tr[data-ts]").forEach((tr) => (tr.onclick = () => {
+    const ts = Number(tr.dataset.ts);
+    rangoHoras = 6; irA("historial"); cargarHistorial(ts).then(() => elegirMomento(ts));
+  }));
+  // Promedio de CPU por día (en la hora local de este equipo).
+  const porDia = new Map();
+  for (const p of linea7) {
+    const d = new Date(p.ts); d.setHours(0, 0, 0, 0);
+    const k = d.getTime(), a = porDia.get(k) || { suma: 0, n: 0, mem: 0, total: p.mem_total };
+    a.suma += p.cpu_prom * p.muestras; a.mem += p.mem_prom * p.muestras; a.n += p.muestras; porDia.set(k, a);
+  }
+  semanaDias = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i);
+    const a = porDia.get(d.getTime());
+    semanaDias.push({ dia: d, cpu: a ? a.suma / a.n : null, mem: a && a.total ? (a.mem / a.n / a.total) * 100 : null });
+  }
+  dibujarSemana();
+}
+function dibujarSemana() {
+  const canvas = $("#g-semana");
+  if (!canvas.offsetParent) return;
+  const { ctx, w, h } = lienzo(canvas);
+  ctx.clearRect(0, 0, w, h);
+  ctx.font = "11px Segoe UI, system-ui, sans-serif";
+  const ancho = w / 7, alto = h - 34;
+  semanaDias.forEach((d, i) => {
+    const x = i * ancho;
+    ctx.fillStyle = css("--suave");
+    const etiqueta = d.dia.toLocaleDateString("es", { weekday: "short", day: "numeric" });
+    ctx.fillText(etiqueta, x + ancho / 2 - ctx.measureText(etiqueta).width / 2, h - 6);
+    if (d.cpu == null) { ctx.fillText("sin datos", x + ancho / 2 - 22, h - 26); return; }
+    const barra = (v, color, dx) => {
+      const bh = (v / 100) * alto;
+      ctx.fillStyle = css(color); ctx.fillRect(x + ancho / 2 + dx, h - 20 - bh, 14, bh);
+    };
+    barra(d.cpu, "--cpu", -16); barra(d.mem, "--mem", 2);
+    ctx.fillStyle = css("--texto");
+    const t = `${nf0.format(d.cpu)} % · ${nf0.format(d.mem)} %`;
+    ctx.fillText(t, x + ancho / 2 - ctx.measureText(t).width / 2, h - 24 - (Math.max(d.cpu, d.mem) / 100) * alto);
+  });
+}
+AL_ENTRAR.semana = cargarSemana;
 
 // =====================================================================
 // Vista DISCO
@@ -957,6 +1088,7 @@ async function cargarReglas() {
       <label class="fila">${c("puerto_activa")} Un programa empieza a escuchar en un puerto TCP nuevo</label>
       <label class="fila" style="margin-left:26px">${c("puerto_solo_red")} Solo si acepta conexiones de otros equipos (ignora los de 127.0.0.1, comunes en herramientas de desarrollo)</label>
     </div>
+    <label class="fila bloque">${c("notificar_windows")} Mostrar también una notificación en la esquina de la pantalla (aunque el navegador esté cerrado)</label>
     <div class="fila bloque"><button id="guardar-reglas" class="activo">Guardar reglas</button>
       <span class="suave chico">Un mismo aviso no se repite antes de una hora (seis horas para el espacio en disco).</span></div></div>`;
   $("#guardar-reglas").onclick = guardarReglas;
@@ -978,6 +1110,7 @@ AL_ENTRAR.avisos = () => { cargarReglas(); cargarAvisos(); };
 function redibujarTodo() {
   if (ultima && vista === "ahora") pintarAhora();
   if (vista === "historial") dibujarHistorial();
+  if (vista === "semana") dibujarSemana();
 }
 window.addEventListener("resize", redibujarTodo);
 async function arrancar() {

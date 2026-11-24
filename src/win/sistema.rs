@@ -144,3 +144,87 @@ pub fn unidades() -> Resultado<Vec<Unidad>> {
     }
     Ok(resultado)
 }
+
+/// Convierte una hora Unix (ms, UTC) a texto en la hora local de este
+/// equipo: `AAAA-MM-DD HH:MM:SS`. Respeta el horario de verano vigente en
+/// esa fecha (no el de hoy).
+pub fn hora_local(ms: i64) -> Option<String> {
+    use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+    let v = u64::try_from(ms).ok()? * 10_000 + 116_444_736_000_000_000;
+    let ft = FILETIME {
+        dwLowDateTime: v as u32,
+        dwHighDateTime: (v >> 32) as u32,
+    };
+    let mut utc = SYSTEMTIME::default();
+    let mut local = SYSTEMTIME::default();
+    // FileTimeToSystemTime (kernel32): de "intervalos de 100 ns" a una fecha
+    // con año, mes, día, hora... (todavía en UTC).
+    unsafe { FileTimeToSystemTime(&ft, &mut utc) }.ok()?;
+    // SystemTimeToTzSpecificLocalTime (kernel32): de UTC a la zona horaria
+    // del equipo (None = la configurada en Windows), aplicando las reglas de
+    // horario de verano que correspondían en esa fecha.
+    unsafe { SystemTimeToTzSpecificLocalTime(None, &utc, &mut local) }.ok()?;
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute, local.wSecond
+    ))
+}
+
+/// Estado de la batería.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Bateria {
+    /// Porcentaje de carga (0–100), si Windows lo sabe.
+    pub porcentaje: Option<u8>,
+    /// `Some(true)` si está enchufado a la corriente.
+    pub enchufado: Option<bool>,
+    pub cargando: bool,
+    /// Ahorro de batería activado.
+    pub ahorro: bool,
+    /// Segundos de autonomía restantes estimados, si Windows los sabe.
+    pub segundos_restantes: Option<u32>,
+}
+
+/// Lee el estado de la batería. `None` si el equipo no tiene batería.
+pub fn bateria() -> Option<Bateria> {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut st = SYSTEM_POWER_STATUS::default();
+    // GetSystemPowerStatus (kernel32): estado de la alimentación. Los
+    // valores "desconocido" vienen como 255 (bytes) o 0xFFFFFFFF.
+    unsafe { GetSystemPowerStatus(&mut st) }.ok()?;
+    // BatteryFlag: 128 = sin batería; 255 = estado desconocido.
+    if st.BatteryFlag & 128 != 0 || st.BatteryFlag == 255 {
+        return None;
+    }
+    Some(Bateria {
+        porcentaje: (st.BatteryLifePercent <= 100).then_some(st.BatteryLifePercent),
+        enchufado: match st.ACLineStatus {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        },
+        cargando: st.BatteryFlag & 8 != 0,
+        ahorro: st.SystemStatusFlag == 1,
+        segundos_restantes: (st.BatteryLifeTime != u32::MAX).then_some(st.BatteryLifeTime),
+    })
+}
+
+#[cfg(test)]
+mod pruebas {
+    #[test]
+    fn hora_local_tiene_el_formato_esperado() {
+        let t = super::hora_local(1_790_000_000_000).unwrap();
+        assert_eq!(t.len(), 19);
+        assert!(t.starts_with("2026-"));
+        assert_eq!(super::hora_local(-1), None);
+    }
+
+    #[test]
+    fn bateria_no_falla() {
+        // Puede no haber batería (equipo de escritorio): solo se comprueba
+        // que la lectura sea coherente cuando la hay.
+        if let Some(b) = super::bateria() {
+            assert!(b.porcentaje.is_none_or(|p| p <= 100));
+        }
+    }
+}

@@ -17,6 +17,7 @@ pub mod colector;
 pub mod conexiones;
 pub mod disco;
 pub mod error;
+pub mod exportar;
 pub mod historial;
 pub mod inicio;
 pub mod servidor;

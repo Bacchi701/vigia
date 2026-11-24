@@ -367,3 +367,29 @@ fn reglas_por_la_api_y_aviso_real_de_disco() {
     );
     drop(l);
 }
+
+#[test]
+fn resumen_semanal_por_la_api() {
+    let p = Prueba::nueva();
+    let r = p.json("/api/resumen");
+    assert_eq!(r["minutos"], 0); // base nueva, sin minutos cerrados todavía
+    assert!(r["top_cpu"].as_array().is_some());
+    assert!(r["picos_cpu"].as_array().is_some());
+    assert_eq!(p.get("/api/resumen?desde=x").estado, 400);
+}
+
+#[test]
+fn exportar_csv_por_la_api() {
+    let p = Prueba::nueva();
+    let r = p.get("/api/exportar?tipo=apps");
+    assert_eq!(r.estado, 200);
+    assert!(r.cabecera.contains("text/csv"));
+    assert!(
+        r.cabecera
+            .contains("attachment; filename=\"vigia_aplicaciones_")
+    );
+    assert!(r.cuerpo.starts_with('\u{FEFF}'));
+    assert!(r.cuerpo.contains("fecha;aplicacion;descripcion"));
+    let r = p.get("/api/exportar");
+    assert!(r.cuerpo.contains("fecha;cpu_promedio_pct"));
+}
