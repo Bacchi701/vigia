@@ -123,7 +123,13 @@ tbody tr.elegido { background: var(--acento-suave); }
 .leyenda { display: flex; gap: 16px; font-size: 12.5px; color: var(--suave); }
 .leyenda i { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 6px; }
 .dos-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-@media (max-width: 900px) { .dos-col { grid-template-columns: 1fr; } header { flex-wrap: wrap; } }
+@media (max-width: 900px) { .dos-col { grid-template-columns: 1fr; } }
+/* En pantallas angostas el menú pasa a su propia fila completa, en vez de
+   partirse y dejar una pestaña sola en una segunda línea. */
+@media (max-width: 1180px) {
+  header { flex-wrap: wrap; row-gap: 6px; }
+  nav { order: 3; width: 100%; }
+}
 .vacio { padding: 26px; text-align: center; color: var(--suave); }
 </style>
 </head>

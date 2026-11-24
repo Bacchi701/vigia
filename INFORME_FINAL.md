@@ -45,9 +45,16 @@ Seguridad: el servidor escucha solo en `127.0.0.1`. Rechaza peticiones cuyo `Hos
 | Arranque | 2 | `vigia.exe` real: arranca, responde, un segundo arranque no crea otra instancia (también si se abren dos a la vez) y `--detener` lo cierra. |
 | Notificación | 1 | Se muestran 3 notificaciones reales, se cierran solas y la cuarta no tiene lugar. |
 
-Además se revisó a mano en el navegador cada pantalla, en modo claro y oscuro, sin errores en la consola de JavaScript.
+Además se revisaron a mano en el navegador, con la versión release, las 8 pantallas, sin errores en la consola de JavaScript. En capturas de pantalla se vieron así:
 
-Después de H3, un revisor independiente revisó el colector, el historial y la interfaz, y encontró 15 problemas reales y 5 mejoras de solidez. Todos se corrigieron, salvo dos puntos menores en que se explica por qué no (ver `REVISION_H3.md`). Los más importantes:
+- **En modo oscuro**: Ahora, el panel «¿Qué es esto?», Historial, Semana, Disco, Inicio, Conexiones y Avisos.
+- **En modo claro**: Aplicaciones, Semana, Disco, Inicio, Conexiones y Avisos.
+
+No se capturaron Ahora e Historial en modo claro ni Aplicaciones en modo oscuro. Usan los mismos colores que las demás.
+
+Ojo: `cargo test` muestra de verdad 4 notificaciones de prueba en la esquina de la pantalla (1,5 s cada una) y crea uniones de carpeta de prueba con `mklink /J` dentro de `target\tmp`.
+
+Después de H3, un revisor independiente revisó el colector, el historial y la interfaz, y encontró 15 problemas reales y 5 mejoras de solidez. Se corrigieron todos, salvo una parte de uno (los procesos nuevos siguen mostrando 0 % de CPU en su primera muestra, como en el Administrador de tareas); además, dos sugerencias de mejora no se aplicaron, con su motivo (ver `REVISION_H3.md`). Los más importantes:
 
 - La base no devolvía espacio al disco.
 - Reiniciar Vigía dentro de un mismo minuto pisaba ese minuto.
@@ -60,10 +67,10 @@ Medido con la versión release en este equipo (6 procesadores lógicos, unos 350
 
 | Situación | Duración | CPU (% del equipo) | Memoria (*working set*) promedio / máxima | Memoria privada promedio / máxima |
 |---|---|---|---|---|
-| Sin la página abierta, mientras yo compilaba y corría pruebas (muchos procesos nuevos) | 10 min | 0,11 % | 16,6 / 19,6 MB | 6,8 / 10,1 MB |
-| Con la página pidiendo datos cada 2 s, como la pantalla «Ahora» (134 peticiones de ~207 KB) | 5 min | 0,036 % | 18,6 / 20,2 MB | 9,3 / 11,3 MB |
+| Sin la página abierta, mientras yo compilaba y corría pruebas (muchos procesos nuevos); versión de H6, sin los extras | 10 min | 0,11 % | 16,6 / 19,6 MB | 6,8 / 10,1 MB |
+| Con un script que pide `/api/ahora` cada 2 s, como la pantalla «Ahora» (134 peticiones de ~207 KB); versión con los extras | 5 min | 0,036 % | 18,6 / 20,2 MB | 9,3 / 11,3 MB |
 
-Las dos situaciones quedan muy por debajo de las metas (menos de 1 % de CPU y menos de 50 MB). Hay dos cosas que no medí:
+Las dos situaciones quedan muy por debajo de las metas (menos de 1 % de CPU y menos de 50 MB). Los scripts usados están en `herramientas\medir.ps1` y `herramientas\sondear.ps1`, para repetir la medición. Hubo un primer intento con la página abierta en el navegador de prueba, pero el panel estaba oculto y frenó las actualizaciones de la página, así que no sirvió; por eso se usó el script. Hay dos cosas que no medí:
 
 - El consumo durante el análisis de una unidad completa: esta noche solo se analizó la carpeta del proyecto, que tardó 1 s. Un análisis grande usa más memoria mientras dura, porque guarda la lista de carpetas.
 - El consumo con el navegador visible durante horas.
@@ -75,17 +82,20 @@ Todas están en `DECISIONES.md` con sus alternativas y motivos. Las principales:
 - **Lista de procesos con `NtQuerySystemInformation`.** Con el método «de libro» (abrir cada proceso), 146 de 370 procesos no dejaban leer su CPU ni su memoria sin administrador.
 - **Aplicación = procesos con el mismo nombre de ejecutable.** Por minuto se guardan las ~25 aplicaciones que más consumen y el resto se junta como «otras», para que la base no crezca sin control. Se conservan 30 días, con un tope de 200 MB.
 - **Avisos de puertos nuevos solo para puertos accesibles desde otros equipos** (se puede cambiar). En la primera prueba real hubo 29 avisos de puertos locales de herramientas de desarrollo.
-- **Notificaciones con una ventana propia**, desactivadas por omisión. Las notificaciones nativas hacen que Windows escriba en el registro (pregunta en `PREGUNTAS.md`).
+- **Notificaciones con una ventana propia**, desactivadas por omisión. Según lo que se sabe de Windows, las notificaciones nativas hacen que el sistema escriba en el registro. No lo comprobé en este equipo (para no provocarlo), así que elegí la ventana propia por precaución (pregunta en `PREGUNTAS.md`).
 - **El token viaja después de `#`** en la URL, que el navegador nunca envía al servidor, y luego en un encabezado propio.
 
 ## Problemas pendientes y cosas no verificadas
 
+- **El extra 3 (notificaciones de Windows) se entregó con un sustituto**: una ventana propia en la esquina de la pantalla, no las notificaciones del sistema que pedía el plan. El motivo está en «Decisiones importantes» y la pregunta, en `PREGUNTAS.md`.
 - **«Mostrar en el Explorador»** no se probó abriendo una ventana de verdad. Solo se probó que rechaza rutas que no están en un análisis guardado.
 - **La tarjeta de batería** no se pudo ver: este equipo no tiene batería. La lectura sí se probó (devuelve «sin batería» sin errores).
 - **La notificación propia** se probó creándola y cerrándola, pero no vi su aspecto en pantalla. Solo se muestra si activas la opción en Avisos.
 - **El historial solo existe mientras Vigía está abierto.** Para tener datos de todo el día, ábrelo al iniciar sesión (instrucciones en `GUIA_DE_USO.md`). Si lo agregas al inicio, Vigía avisará una vez «Nuevo programa de inicio» por sí mismo.
 - **Datos de esta noche**: la base `datos\vigia.db` ya tiene 58 minutos de historial. También tiene 29 avisos de puertos nuevos generados mientras probaba, antes de existir la opción de ignorar los puertos locales (puedes marcarlos como vistos), y dos análisis de la carpeta del proyecto. Las reglas de avisos tienen los valores por omisión.
-- **Archivos que quedan bajo `target\tmp`**: los árboles de prueba del análisis de disco, con una unión de prueba que apunta a su propia carpeta. Están ahí porque la regla de la noche impedía borrar carpetas recursivamente. Se pueden borrar sin problema; `target\` está fuera de git.
+- **Archivos que quedan bajo `target\tmp`**: los árboles de prueba del análisis de disco, con una unión de prueba que apunta a su propia carpeta. Están ahí porque la regla de la noche impedía borrar carpetas recursivamente. `target\` está fuera de git. Si quieres borrarlas, conviene quitar primero la unión con `rmdir` sin `/s` (borra solo el enlace). No lo probé: no verifiqué cómo reacciona un borrado recursivo ante una unión que apunta a su propia carpeta.
+- **Archivos fuera de esta carpeta**: durante la medición escribí cinco archivos auxiliares en la carpeta temporal de la sesión (`C:\Users\BRYAN\AppData\Local\Temp\claude\e9d8904fa35d62af\1c06c207-6c84-4b63-9cf1-d4fdb9716d15\scratchpad\`). Fue un descuido frente a la regla de escribir solo aquí. Son `url.txt`, `args.txt`, `sondeo.txt`, `medir.ps1` y `sondear.ps1`. Los dos primeros contienen tokens de instancias de Vigía que ya se cerraron (no sirven para nada) y se pueden borrar. Los dos scripts se copiaron a `herramientas\`.
+- **Una pestaña en tu navegador**: la prueba de `iniciar_vigia.bat` abrió una pestaña en tu navegador predeterminado. Apunta a una instancia que ya se cerró, así que mostrará «Sin conexión»; puedes cerrarla. No la cerré yo porque es tu navegador.
 - **La pantalla Ahora pide la muestra completa cada 2 s** (~200 KB, solo dentro del equipo). El consumo medido es bajo, pero se podría enviar solo lo que cambió.
 
 ## Siguientes pasos sugeridos

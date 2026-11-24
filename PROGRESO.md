@@ -98,6 +98,13 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
   - Pidiendo `/api/ahora` cada 2 s como la pantalla Ahora, 5 min (134 peticiones de ~207 KB): CPU 0,036 %, *working set* 18,6 MB (20,2 máx.), privada 9,3 MB (11,3 máx.).
   - Un primer intento con la página en el panel del navegador no sirvió: el panel estaba oculto y frenó los temporizadores de la página (la última muestra mostrada tenía 2 min). Se repitió con un script que pide los datos igual que la página.
 - Documentos: `README.md`, `GUIA_DE_USO.md`, `ARQUITECTURA.md` actualizado, `PREGUNTAS.md`, `INFORME_FINAL.md`.
+- Revisión final (sugerida por el asesor):
+  - Se completaron los comentarios de las llamadas a Windows en `src/win/notificacion.rs`.
+  - Se tomaron capturas de Inicio y Conexiones en modo claro, y de Semana, Disco, Inicio, Conexiones y Avisos en oscuro.
+  - Se corrigió el encabezado: con 8 pestañas, el menú pasa a su propia fila en pantallas de menos de 1180 px.
+  - Se precisó el informe: el extra 3 es un sustituto, las escrituras en el registro de las notificaciones nativas no se verificaron, y quedaron archivos auxiliares en la carpeta temporal de la sesión.
+  - Los scripts de medición se copiaron a `herramientas/`.
+  - Tras estos cambios, `cargo fmt --check`, clippy (0 avisos), `cargo test` (67 de 67) y `cargo build --release` pasaron, y no queda ningún `vigia.exe` en marcha.
 
 ## Qué sigue
 Nada del plan. Todo terminado; ver `INFORME_FINAL.md`.

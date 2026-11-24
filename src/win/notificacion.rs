@@ -2,13 +2,15 @@
 //! se cierra sola.
 //!
 //! ## Por qué no la notificación "nativa" de Windows
-//! - Los globos de `Shell_NotifyIconW` hacen que el Explorador registre el
-//!   ícono en `HKCU\Control Panel\NotifyIconSettings`.
-//! - Las notificaciones *toast* exigen un AppUserModelID registrado en el
+//! Según la documentación y lo que se sabe del sistema (no se comprobó en
+//! este equipo, para no provocar justamente esas escrituras):
+//! - Los globos de `Shell_NotifyIconW` hacen que el Explorador recuerde el
+//!   ícono en el registro (`HKCU\Control Panel\NotifyIconSettings`).
+//! - Las notificaciones *toast* necesitan un AppUserModelID registrado en el
 //!   registro o un acceso directo en el menú Inicio.
 //!
 //! Vigía no debe escribir en el registro, ni directa ni indirectamente, así
-//! que dibuja su propia ventana con Win32 y GDI. De paso, es un buen ejemplo
+//! que, por precaución, dibuja su propia ventana con Win32 y GDI. De paso, es un buen ejemplo
 //! de cómo funciona una ventana de Windows por dentro: clase, procedimiento
 //! de ventana, mensajes y pintado.
 
@@ -89,7 +91,9 @@ fn mostrar_en(lugar: usize, titulo: &str, texto: &str, duracion_ms: u32) -> Resu
             ..Default::default()
         };
         // RegisterClassExW (user32): registra el "molde" de ventana con su
-        // procedimiento (la función que recibe todos sus mensajes).
+        // procedimiento (la función que recibe todos sus mensajes). Devuelve
+        // un identificador de clase, o 0 si falló; si falla, CreateWindowExW
+        // también fallará y ese error sí se informa.
         unsafe { RegisterClassExW(&clase) };
     });
 
@@ -144,16 +148,36 @@ fn mostrar_en(lugar: usize, titulo: &str, texto: &str, duracion_ms: u32) -> Resu
     // hilo y DispatchMessageW lo entrega a `procedimiento`. Termina cuando
     // llega WM_QUIT (que enviamos con PostQuitMessage al destruirla).
     let mut msg = MSG::default();
+    // GetMessageW (user32) devuelve FALSE (0) al recibir WM_QUIT; mientras
+    // devuelva TRUE hay un mensaje que procesar.
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
         unsafe {
+            // TranslateMessage (user32): convierte pulsaciones de teclas en
+            // mensajes de carácter. Aquí no se usa el teclado, pero es parte
+            // del bucle estándar. Devuelve si tradujo algo; se ignora.
             let _ = TranslateMessage(&msg);
+            // DispatchMessageW (user32): llama a `procedimiento` con el
+            // mensaje. Devuelve lo que devuelva el procedimiento; se ignora.
             DispatchMessageW(&msg);
         }
     }
     Ok(())
 }
 
-/// Procedimiento de ventana: Windows lo llama con cada mensaje.
+/// Procedimiento de ventana: Windows lo llama con cada mensaje. Devuelve un
+/// `LRESULT` cuyo significado depende del mensaje (0 = "lo manejé").
+///
+/// - `SetWindowLongPtrW` / `GetWindowLongPtrW` (user32): guardan y leen un
+///   valor del tamaño de un puntero dentro de la ventana (GWLP_USERDATA). Es
+///   la forma habitual de asociar datos propios a una ventana. `Set...`
+///   devuelve el valor anterior.
+/// - `DefWindowProcW` (user32): comportamiento por omisión de Windows para
+///   los mensajes que no manejamos (y para WM_NCCREATE, que debe seguir su
+///   curso para que la ventana se cree). Devolvemos lo que devuelva.
+/// - `DestroyWindow` (user32): destruye la ventana; Windows le envía
+///   WM_DESTROY y WM_NCDESTROY. Devuelve error si la ventana ya no existe.
+/// - `PostQuitMessage` (user32): deja WM_QUIT en la cola del hilo para que
+///   el bucle de `mostrar_en` termine. No devuelve nada.
 unsafe extern "system" fn procedimiento(
     hwnd: HWND,
     msg: u32,
@@ -215,6 +239,9 @@ unsafe fn pintar(hwnd: HWND, c: &mut Contenido) {
         FillRect(hdc, &todo, fondo);
         let franja = CreateSolidBrush(rgb(91, 156, 255));
         FillRect(hdc, &RECT { right: 5, ..todo }, franja);
+        // SetBkMode (gdi32) con TRANSPARENT: el texto se dibuja sin
+        // rellenar su fondo (si no, cada letra llevaría un rectángulo
+        // blanco). Devuelve el modo anterior; no hace falta.
         SetBkMode(hdc, TRANSPARENT);
 
         // CreateFontW (gdi32): fuente Segoe UI. Altura negativa = tamaño
@@ -251,8 +278,10 @@ unsafe fn pintar(hwnd: HWND, c: &mut Contenido) {
             0,
             w!("Segoe UI"),
         );
-        // SelectObject: elige la fuente con la que DrawTextW escribe.
+        // SelectObject (gdi32): elige la fuente con la que DrawTextW
+        // escribe y devuelve la que estaba, para restaurarla al final.
         let anterior = SelectObject(hdc, HGDIOBJ(negrita.0));
+        // SetTextColor (gdi32): color de las letras. Devuelve el anterior.
         SetTextColor(hdc, rgb(255, 255, 255));
         let mut r = RECT {
             left: 18,
@@ -289,6 +318,8 @@ unsafe fn pintar(hwnd: HWND, c: &mut Contenido) {
         let _ = DeleteObject(HGDIOBJ(normal.0));
         let _ = DeleteObject(HGDIOBJ(fondo.0));
         let _ = DeleteObject(HGDIOBJ(franja.0));
+        // EndPaint (user32): cierra lo abierto por BeginPaint y marca la
+        // ventana como pintada. Siempre devuelve TRUE.
         let _ = EndPaint(hwnd, &ps);
     }
 }
