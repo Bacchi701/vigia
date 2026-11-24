@@ -95,3 +95,10 @@ No se usa `sysinfo` ni crates parecidos: las llamadas a Windows están escritas 
 - **Los valores que llegan de la interfaz se corrigen a rangos razonables** (`Reglas::corregidas`) · rechazar · más amable y igual de seguro.
 - **Puertos nuevos: por omisión solo avisan los accesibles desde otros equipos** (`puerto_solo_red`) · avisar de todos · en la primera prueba real hubo 29 avisos, casi todos de herramientas de desarrollo en 127.0.0.1. Se puede desactivar en la pantalla Avisos.
 - **La referencia de inicio y puertos se actualiza aunque la regla esté desactivada** · no revisar · si se vuelve a activar no aparece una avalancha de cambios viejos.
+
+## Después de los hitos (extras)
+
+- **Resumen semanal** como pantalla propia («Semana»): CPU y memoria promedio, 10 aplicaciones que más CPU y memoria usaron, 5 momentos de mayor carga (separados al menos 1 hora, para no mostrar 5 minutos seguidos de la misma tarde) con la aplicación que más consumía, y barras por día · solo una tabla · la separación hace que los picos digan algo distinto cada uno. Las barras por día se agrupan en el navegador, que conoce la zona horaria local.
+- **CSV pensado para Excel en español**: separador `;`, coma decimal, UTF-8 con BOM, fechas en hora local con `SystemTimeToTzSpecificLocalTime` (respeta el horario de verano de cada fecha) · separador `,` · Excel en español no abre bien los CSV con coma. La descarga se pide con `fetch` para poder enviar el token.
+- **Notificaciones: ventana propia** (Win32 + GDI, esquina inferior derecha, no roba el foco, se cierra a los 8 s o con un clic, máximo 3 apiladas), **desactivada por omisión** · globo de `Shell_NotifyIconW` o *toast* · ambas hacen que Windows escriba en el registro (ver `PREGUNTAS.md`). La ventana corre en su propio hilo con su bucle de mensajes.
+- **Batería** con `GetSystemPowerStatus`, leída cada 30 s junto con las unidades; la tarjeta solo aparece si el equipo tiene batería · ocultar siempre · en este equipo de escritorio no se ve, pero el código queda probado contra la lectura real.

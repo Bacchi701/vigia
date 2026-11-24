@@ -13,11 +13,11 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 | H4 Disco | terminado | 2026-11-24T05:35:34.5801355-03:00 |
 | H5 Inicio y conexiones | terminado | 2026-11-24T05:42:52.4085010-03:00 |
 | H6 Avisos | terminado | 2026-11-24T06:00:47.7465406-03:00 |
-| H7 Entrega | pendiente | |
-| Extra 1 Resumen semanal | pendiente | |
-| Extra 2 Exportar CSV | pendiente | |
-| Extra 3 Notificaciones de Windows | pendiente | |
-| Extra 4 Batería | pendiente | |
+| H7 Entrega | terminado | 2026-11-24T06:26:01.9141625-03:00 |
+| Extra 1 Resumen semanal | terminado | 2026-11-24T06:26:01.9141625-03:00 |
+| Extra 2 Exportar CSV | terminado | 2026-11-24T06:26:01.9141625-03:00 |
+| Extra 3 Notificaciones de Windows | terminado (ventana propia; ver PREGUNTAS.md) | 2026-11-24T06:26:01.9141625-03:00 |
+| Extra 4 Batería | terminado | 2026-11-24T06:26:01.9141625-03:00 |
 
 ## Resultados de pruebas por hito
 
@@ -80,11 +80,30 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 - Prueba manual (release): formulario de reglas guardado desde la interfaz. Se agregó la opción «solo puertos accesibles desde otros equipos» porque aparecieron 29 avisos de puertos locales de herramientas de desarrollo.
 - `cargo clippy --all-targets -- -D warnings` sin avisos.
 
+### Extras (programados mientras corría la medición de consumo de H7)
+- `cargo test`: 67 pruebas pasan (44 unitarias + 2 arranque + 4 colector + 3 disco + 2 historial + 1 notificación + 11 servidor).
+  - Resumen semanal con datos simulados: aplicación con más CPU y con más memoria, dos picos separados más de una hora con la app culpable, período vacío sin errores; `/api/resumen` responde.
+  - CSV: encabezados, BOM, coma decimal, campos con `;` y comillas bien escapados; `/api/exportar` entrega `text/csv` con nombre de archivo.
+  - Notificación propia mostrada de verdad: 3 se muestran y se cierran solas en ~1,5 s, la cuarta no tiene lugar, y al cerrarse liberan su lugar.
+  - Batería: la lectura no falla (este equipo no tiene batería, así que la tarjeta no se muestra).
+  - Hora local con `SystemTimeToTzSpecificLocalTime`: formato correcto.
+- `cargo clippy --all-targets -- -D warnings` sin avisos.
+
+### H7
+- Verificación final: `cargo fmt --check` sin cambios, `cargo clippy --all-targets -- -D warnings` sin avisos, `cargo test` 67 de 67, `cargo build --release` al día.
+- `iniciar_vigia.bat` (ejecutado con `cmd /c`): Vigía arrancó, abrió el navegador y respondió en `/api/estado`. `detener_vigia.bat`: «Vigía se cerró.», sin procesos `vigia.exe` y sin archivo de estado.
+- Las 8 pantallas cargan en el navegador (release) sin errores de JavaScript; CSV con hora local; casilla de notificaciones y botones de exportar presentes.
+- Consumo medido (release, 6 procesadores, ~350 procesos):
+  - Sin la página, 10 min, mientras se compilaba y corrían pruebas: CPU 0,11 %, *working set* 16,6 MB promedio (19,6 máx.), privada 6,8 MB (10,1 máx.).
+  - Pidiendo `/api/ahora` cada 2 s como la pantalla Ahora, 5 min (134 peticiones de ~207 KB): CPU 0,036 %, *working set* 18,6 MB (20,2 máx.), privada 9,3 MB (11,3 máx.).
+  - Un primer intento con la página en el panel del navegador no sirvió: el panel estaba oculto y frenó los temporizadores de la página (la última muestra mostrada tenía 2 min). Se repitió con un script que pide los datos igual que la página.
+- Documentos: `README.md`, `GUIA_DE_USO.md`, `ARQUITECTURA.md` actualizado, `PREGUNTAS.md`, `INFORME_FINAL.md`.
+
 ## Qué sigue
-H7 Entrega.
+Nada del plan. Todo terminado; ver `INFORME_FINAL.md`.
 
 ## Problemas abiertos
-Ninguno.
+Ver «Problemas pendientes y cosas no verificadas» en `INFORME_FINAL.md` (nada bloquea el uso).
 
 ## Cómo reanudar
 Leer este archivo, ver el primer hito no terminado en la tabla, revisar `git log` y continuar desde ahí.
