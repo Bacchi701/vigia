@@ -19,6 +19,8 @@ use crate::historial::{self, MINUTO_MS, Orden};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tiny_http::{Header, Request, Server};
 
@@ -63,7 +65,7 @@ impl Respuesta {
 
 /// Bucle del hilo servidor. Espera peticiones en intervalos cortos para
 /// poder notar a tiempo que hay que detenerse.
-pub fn atender(servidor: &Server, estado: &Estado) {
+pub fn atender(servidor: &Server, estado: &Arc<Estado>) {
     while !estado.detenido() {
         match servidor.recv_timeout(Duration::from_millis(250)) {
             Ok(Some(peticion)) => manejar(peticion, estado),
@@ -87,7 +89,7 @@ pub struct Peticion<'a> {
     pub cuerpo: String,
 }
 
-fn manejar(mut peticion: Request, estado: &Estado) {
+fn manejar(mut peticion: Request, estado: &Arc<Estado>) {
     let metodo = peticion.method().as_str().to_string();
     let url = peticion.url().to_string();
     let (ruta, consulta) = url.split_once('?').unwrap_or((&url, ""));
@@ -178,7 +180,7 @@ fn token_valido(dado: Option<&str>, correcto: &str) -> bool {
 }
 
 /// Decide la respuesta. Separado de `manejar` para que sea fácil de leer.
-pub fn rutear(p: &Peticion, estado: &Estado) -> Respuesta {
+pub fn rutear(p: &Peticion, estado: &Arc<Estado>) -> Respuesta {
     if !host_valido(p.host, estado.puerto) {
         return Respuesta::error(403, "Host no permitido");
     }
@@ -206,7 +208,7 @@ pub fn rutear(p: &Peticion, estado: &Estado) -> Respuesta {
     }
 }
 
-fn api(p: &Peticion, estado: &Estado) -> Resultado<Respuesta> {
+fn api(p: &Peticion, estado: &Arc<Estado>) -> Resultado<Respuesta> {
     let num = |clave: &str, omision: i64| -> Resultado<i64> {
         match p.consulta.get(clave) {
             None => Ok(omision),
@@ -258,12 +260,71 @@ fn api(p: &Peticion, estado: &Estado) -> Resultado<Respuesta> {
             let minutos = historial::minutos_con_datos(&conn, desde, hasta)?;
             Respuesta::json(&serde_json::json!({ "apps": apps, "minutos": minutos }))
         }
+        // ---------- Disco ----------
+        ("POST", "/api/disco/analizar") => {
+            let ruta = cuerpo_json(p)?["ruta"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            let raiz = crate::disco::normalizar_raiz(&ruta)?;
+            estado.iniciar_analisis(raiz)?;
+            Respuesta::json(&serde_json::json!({ "ok": true }))
+        }
+        ("GET", "/api/disco/progreso") => Respuesta::json(&*bloquear(&estado.disco.progreso)),
+        ("POST", "/api/disco/cancelar") => {
+            estado.disco.cancelar.store(true, Ordering::SeqCst);
+            Respuesta::json(&serde_json::json!({ "ok": true }))
+        }
+        ("GET", "/api/disco/lista") => {
+            Respuesta::json(&crate::disco::lista(&bloquear(&estado.base))?)
+        }
+        ("GET", "/api/disco/analisis") => {
+            let id = p.consulta.get("id").and_then(|x| x.parse().ok());
+            let conn = bloquear(&estado.base);
+            let a = crate::disco::leer(&conn, id)?;
+            let previo = match &a {
+                Some(a) => crate::disco::anterior(&conn, a)?,
+                None => None,
+            };
+            let cambios = match (&previo, &a) {
+                (Some(b), Some(a)) => {
+                    let mut c = crate::disco::comparar(b, a);
+                    c.truncate(60);
+                    Some(c)
+                }
+                _ => None,
+            };
+            Respuesta::json(&serde_json::json!({
+                "analisis": a,
+                "anterior": previo.map(|b| serde_json::json!({ "id": b.id, "fin_ms": b.fin_ms, "total": b.total })),
+                "cambios": cambios,
+            }))
+        }
+        ("POST", "/api/disco/abrir") => {
+            // Solo abre rutas que aparecen en un análisis guardado: la API no
+            // sirve para abrir rutas arbitrarias en el Explorador.
+            let cuerpo = cuerpo_json(p)?;
+            let id = cuerpo["id"].as_i64().ok_or_else(|| error("falta id"))?;
+            let ruta = cuerpo["ruta"].as_str().unwrap_or_default();
+            let a = crate::disco::leer(&bloquear(&estado.base), Some(id))?
+                .ok_or_else(|| error("no existe ese análisis"))?;
+            if !crate::disco::contiene_ruta(&a, ruta) {
+                return Err(error("Esa ruta no está en el análisis"));
+            }
+            crate::win::sistema_extra::mostrar_en_explorador(ruta)?;
+            Respuesta::json(&serde_json::json!({ "ok": true }))
+        }
         ("POST", "/api/apagar") => {
             estado.pedir_detener();
             Respuesta::json(&serde_json::json!({ "ok": true }))
         }
         _ => Respuesta::error(404, "No existe esa ruta de la API"),
     })
+}
+
+/// Lee el cuerpo de la petición como JSON.
+fn cuerpo_json(p: &Peticion) -> Resultado<serde_json::Value> {
+    serde_json::from_str(&p.cuerpo).map_err(|_| error("El cuerpo debe ser JSON"))
 }
 
 /// Convierte `a=1&b=hola%20mundo` en un mapa.

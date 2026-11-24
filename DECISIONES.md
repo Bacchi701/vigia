@@ -54,3 +54,16 @@ No se usa `sysinfo` ni crates parecidos: las llamadas a Windows están escritas 
 - **Gráficos dibujados a mano en `<canvas>`** · biblioteca de gráficos · sin dependencias ni CDN, como pide el proyecto.
 - **Modo oscuro**: sigue al sistema la primera vez y luego recuerda la elección en `localStorage`.
 - **Tabla de procesos completa cada 2 s** (sin paginación) · paginar · ~370 filas se pintan en milisegundos; la actualización se pausa si la pestaña no está visible.
+
+## H4 · Disco
+
+- **Listado con `FindFirstFileExW` + `FindNextFileW`** (`FindExInfoBasic`, `FIND_FIRST_EX_LARGE_FETCH`) · `std::fs::read_dir` + `metadata` · entrega nombre, tamaño y atributos en una pasada, sin abrir cada archivo, y muestra el atributo de punto de reanálisis.
+- **Se saltan las carpetas con atributo `REPARSE_POINT`** (enlaces simbólicos, uniones) y se cuentan como «enlaces omitidos» · seguirlas · evita contar dos veces y los ciclos infinitos (probado con una unión que apunta a su propia raíz).
+- **Archivos solo en la nube (OneDrive) se suman aparte** (atributos `OFFLINE` / `RECALL_ON_DATA_ACCESS`) · sumarlos al total · no ocupan espacio en el disco.
+- **Tamaño = tamaño lógico del archivo** · tamaño en disco (clústeres, compresión) · obtener el tamaño real asignado requiere abrir cada archivo (`GetCompressedFileSizeW`), mucho más lento.
+- **Recorrido iterativo con pila propia** · recursión · una ruta muy profunda no desborda la pila del hilo.
+- **Prefijo `\?\`** en las rutas · nada · permite rutas de más de 260 caracteres.
+- **Se guarda un árbol resumido** (carpetas ≥ 0,1 % del total, máx. 4000 nodos y 12 niveles), los 100 archivos más grandes y 60 tipos · guardar todo · una unidad completa puede tener cientos de miles de carpetas; el resumen cabe en unos cientos de KB de JSON.
+- **Se conservan los últimos 10 análisis por raíz; la comparación usa el análisis completo anterior** · comparar también con cancelados · un análisis cancelado está incompleto y daría diferencias falsas (igual se guarda y se puede ver, marcado como incompleto).
+- **«Mostrar en el Explorador» solo acepta rutas que aparecen en un análisis guardado** · aceptar cualquier ruta · la API no debe servir para abrir rutas arbitrarias. Usa `explorer.exe /select,"ruta"`. No se probó abrir de verdad (solo el rechazo de rutas ajenas) para no abrir ventanas sin supervisión.
+- **Pruebas solo sobre la carpeta del proyecto y árboles generados en `target/tmp`**, como pide el plan. Los árboles y la unión de prueba se dejan ahí (no se borran carpetas recursivamente).

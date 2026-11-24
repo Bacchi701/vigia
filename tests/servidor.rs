@@ -175,3 +175,49 @@ fn apagar_detiene_la_app() {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+#[test]
+fn analisis_de_disco_por_la_api() {
+    let p = Prueba::nueva();
+    let puerto = p.app().puerto();
+    let token = p.app().token().to_string();
+    let t = [("X-Vigia-Token", token.as_str())];
+    let raiz = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("arbol_api");
+    std::fs::create_dir_all(raiz.join("sub")).unwrap();
+    std::fs::write(raiz.join("sub").join("a.bin"), vec![0u8; 3000]).unwrap();
+    std::fs::write(raiz.join("b.txt"), vec![0u8; 500]).unwrap();
+    let cuerpo = serde_json::json!({ "ruta": raiz.to_string_lossy() }).to_string();
+
+    // Ruta inválida → 400.
+    let malo = serde_json::json!({ "ruta": r"no\es\absoluta" }).to_string();
+    let r = pedir(puerto, "POST", "/api/disco/analizar", &t, &malo).unwrap();
+    assert_eq!(r.estado, 400);
+
+    let r = pedir(puerto, "POST", "/api/disco/analizar", &t, &cuerpo).unwrap();
+    assert_eq!(r.estado, 200, "{}", r.cuerpo);
+    let limite = Instant::now() + Duration::from_secs(20);
+    loop {
+        let prog = p.json("/api/disco/progreso");
+        if prog["en_curso"] == false && !prog["ultimo_id"].is_null() {
+            break;
+        }
+        assert!(Instant::now() < limite, "el análisis no terminó");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let d = p.json("/api/disco/analisis");
+    let a = &d["analisis"];
+    assert_eq!(a["total"], 3500);
+    assert_eq!(a["archivos"], 2);
+    assert_eq!(a["completo"], true);
+    assert_eq!(p.json("/api/disco/lista").as_array().unwrap().len(), 1);
+
+    // Abrir en el Explorador solo acepta rutas del análisis: una ruta ajena
+    // se rechaza sin abrir nada.
+    let id = a["id"].as_i64().unwrap();
+    let ajena = serde_json::json!({ "id": id, "ruta": r"C:\Windows\System32" }).to_string();
+    let r = pedir(puerto, "POST", "/api/disco/abrir", &t, &ajena).unwrap();
+    assert_eq!(r.estado, 400);
+    let sin_id = serde_json::json!({ "ruta": r"C:\x" }).to_string();
+    let r = pedir(puerto, "POST", "/api/disco/abrir", &t, &sin_id).unwrap();
+    assert_eq!(r.estado, 400);
+}

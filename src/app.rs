@@ -60,7 +60,15 @@ pub struct Estado {
     pub historial: Mutex<Historial>,
     pub ultima: Mutex<Option<Arc<Muestra>>>,
     pub base: Mutex<Connection>,
+    /// Análisis de disco: progreso del que está en curso y pedido de cancelar.
+    pub disco: EstadoDisco,
     detener: AtomicBool,
+}
+
+#[derive(Default)]
+pub struct EstadoDisco {
+    pub progreso: Mutex<crate::disco::Progreso>,
+    pub cancelar: AtomicBool,
 }
 
 impl Estado {
@@ -69,6 +77,51 @@ impl Estado {
     }
     pub fn detenido(&self) -> bool {
         self.detener.load(Ordering::SeqCst) || win::sistema_extra::cierre_pedido()
+    }
+
+    /// Empieza un análisis de disco en un hilo propio. Falla si ya hay uno.
+    pub fn iniciar_analisis(self: &Arc<Self>, raiz: String) -> Resultado<()> {
+        {
+            let mut p = bloquear(&self.disco.progreso);
+            if p.en_curso {
+                return Err(error("Ya hay un análisis en curso"));
+            }
+            *p = crate::disco::Progreso {
+                en_curso: true,
+                raiz: raiz.clone(),
+                inicio_ms: ahora_ms(),
+                ultimo_id: p.ultimo_id,
+                ..Default::default()
+            };
+        }
+        self.disco.cancelar.store(false, Ordering::SeqCst);
+        let estado = Arc::clone(self);
+        let lanzado = std::thread::Builder::new()
+            .name("disco".into())
+            .spawn(move || {
+                let a = crate::disco::analizar(
+                    &raiz,
+                    ahora_ms,
+                    &estado.disco.cancelar,
+                    &estado.disco.progreso,
+                );
+                let guardado = crate::disco::guardar(&bloquear(&estado.base), &a);
+                let mut p = bloquear(&estado.disco.progreso);
+                p.en_curso = false;
+                p.carpetas = a.carpetas;
+                p.archivos = a.archivos;
+                p.bytes = a.total;
+                p.errores = a.errores;
+                match guardado {
+                    Ok(id) => p.ultimo_id = Some(id),
+                    Err(e) => p.fallo = Some(e.to_string()),
+                }
+            });
+        if let Err(e) = lanzado {
+            bloquear(&self.disco.progreso).en_curso = false;
+            return Err(e.into());
+        }
+        Ok(())
     }
 }
 
@@ -137,6 +190,7 @@ pub fn iniciar(config: Config) -> Resultado<App> {
         inicio_ms: ahora_ms(),
         ultima: Mutex::new(None),
         base: Mutex::new(conn),
+        disco: EstadoDisco::default(),
         detener: AtomicBool::new(false),
     });
 
@@ -197,6 +251,7 @@ impl App {
     /// estado.
     pub fn detener(self) {
         self.estado.pedir_detener();
+        self.estado.disco.cancelar.store(true, Ordering::SeqCst);
         for h in self.hilos {
             let _ = h.join();
         }

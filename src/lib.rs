@@ -13,6 +13,7 @@ pub mod app;
 pub mod base;
 pub mod cliente;
 pub mod colector;
+pub mod disco;
 pub mod error;
 pub mod historial;
 pub mod servidor;

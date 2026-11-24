@@ -9,6 +9,7 @@
 //! `proceso.rs` → `version.rs` → `red.rs` → el resto.
 #![allow(unsafe_code)]
 
+pub mod archivos;
 pub mod proceso;
 pub mod red;
 pub mod sistema;

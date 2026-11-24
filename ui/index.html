@@ -215,6 +215,24 @@ tbody tr.elegido { background: var(--acento-suave); }
       <th class="num">Memoria promedio</th><th class="num">Memoria máxima</th><th class="num">Lectura y escritura</th><th class="num">Tiempo activa</th>
     </tr></thead><tbody></tbody></table></div>
   </section>
+
+  <!-- ===================== DISCO ===================== -->
+  <section data-vista="disco">
+    <div class="panel">
+      <div class="fila entre">
+        <div class="fila">
+          <input id="ruta-disco" size="46" placeholder="Carpeta o unidad, por ejemplo C:\Users\yo\Descargas" aria-label="Carpeta a analizar">
+          <button id="analizar-disco" class="activo">Analizar</button>
+          <span class="fila" id="atajos-disco"></span>
+        </div>
+        <label class="fila chico" style="gap:6px">Análisis guardados
+          <select id="lista-disco"></select></label>
+      </div>
+      <p class="suave chico">Vigía solo mide: nunca borra ni mueve archivos. Se saltan enlaces y uniones (para no contar dos veces) y las carpetas sin permiso se cuentan como errores y se omiten.</p>
+      <div id="progreso-disco" class="bloque" style="display:none"></div>
+    </div>
+    <div id="resultado-disco"></div>
+  </section>
 </main>
 
 <aside id="detalle" aria-label="Detalle del proceso">
@@ -298,7 +316,7 @@ $("#boton-tema").onclick = () => aplicarTema(document.documentElement.dataset.te
 // Navegación entre vistas
 // =====================================================================
 const VISTAS = [
-  ["ahora", "Ahora"], ["historial", "Historial"], ["aplicaciones", "Aplicaciones"],
+  ["ahora", "Ahora"], ["historial", "Historial"], ["aplicaciones", "Aplicaciones"], ["disco", "Disco"],
 ];
 let vista = "ahora";
 function irA(v) {
@@ -641,6 +659,128 @@ async function cargarApps() {
     ${barra(a, "io_prom", porSeg(a.io_prom))}<td class="num">${duracion(a.minutos * 60000)}</td></tr>`).join("");
 }
 AL_ENTRAR.aplicaciones = () => cargarApps();
+
+// =====================================================================
+// Vista DISCO
+// =====================================================================
+let analisisDisco = null, sondeoDisco = null;
+function unirRuta(a, b) { return a.endsWith("\\") ? a + b : a + "\\" + b; }
+async function cargarDisco(id) {
+  try {
+    const lista = await api("/api/disco/lista");
+    $("#lista-disco").innerHTML = lista.length
+      ? lista.map((g) => `<option value="${g.id}">${esc(g.raiz)} · ${hora(g.fin_ms, true)} · ${bytes(g.total)}${g.completo ? "" : " (incompleto)"}</option>`).join("")
+      : `<option value="">Ninguno todavía</option>`;
+    const d = await api("/api/disco/analisis" + (id ? `?id=${id}` : ""));
+    if (d.analisis) $("#lista-disco").value = String(d.analisis.id);
+    pintarDisco(d);
+  } catch (e) { console.warn(e); }
+  const p = await api("/api/disco/progreso").catch(() => null);
+  if (p && p.en_curso) seguirProgreso();
+}
+function atajosDisco() {
+  const unidades = ultima ? ultima.unidades : [];
+  $("#atajos-disco").innerHTML = unidades.map((u) => `<button data-r="${esc(u.raiz)}">${esc(u.raiz)}</button>`).join("");
+  $$("#atajos-disco button").forEach((b) => (b.onclick = () => { $("#ruta-disco").value = b.dataset.r; }));
+}
+$("#lista-disco").onchange = (e) => e.target.value && cargarDisco(e.target.value);
+$("#analizar-disco").onclick = async () => {
+  const ruta = $("#ruta-disco").value.trim();
+  if (!ruta) { $("#ruta-disco").focus(); return; }
+  try {
+    await api("/api/disco/analizar", { method: "POST", body: JSON.stringify({ ruta }) });
+    seguirProgreso();
+  } catch (e) { mostrarProgreso(`<span style="color:var(--peligro)">${esc(e.message)}</span>`); }
+};
+function mostrarProgreso(html) { const c = $("#progreso-disco"); c.style.display = html ? "block" : "none"; c.innerHTML = html; }
+function seguirProgreso() {
+  clearInterval(sondeoDisco);
+  const paso = async () => {
+    let p;
+    try { p = await api("/api/disco/progreso"); } catch (e) { return; }
+    if (p.en_curso) {
+      mostrarProgreso(`<div class="fila entre"><span>Analizando <b>${esc(p.raiz)}</b>: ${nf0.format(p.carpetas)} carpetas, ${nf0.format(p.archivos)} archivos, ${bytes(p.bytes)}${p.errores ? `, ${p.errores} sin permiso` : ""}</span>
+        <button id="cancelar-disco">Cancelar</button></div><div class="suave chico recorte" style="max-width:100%">${esc(p.actual)}</div>`);
+      $("#cancelar-disco").onclick = () => api("/api/disco/cancelar", { method: "POST" });
+    } else {
+      clearInterval(sondeoDisco);
+      mostrarProgreso(p.fallo ? `<span style="color:var(--peligro)">No se pudo guardar: ${esc(p.fallo)}</span>` : "");
+      cargarDisco(p.ultimo_id);
+    }
+  };
+  paso();
+  sondeoDisco = setInterval(paso, 600);
+}
+function pintarDisco(d) {
+  const caja = $("#resultado-disco");
+  const a = d.analisis;
+  analisisDisco = a;
+  if (!a) { caja.innerHTML = `<div class="panel bloque vacio">Elige una carpeta o unidad y presiona «Analizar».</div>`; return; }
+  const seg = Math.max(1, Math.round((a.fin_ms - a.inicio_ms) / 1000));
+  const extra = [
+    a.completo ? "" : `<b style="color:var(--alerta)">Incompleto (cancelado)</b>`,
+    a.errores ? `${nf0.format(a.errores)} carpetas sin permiso` : "",
+    a.enlaces_omitidos ? `${nf0.format(a.enlaces_omitidos)} enlaces omitidos` : "",
+    a.en_la_nube ? `${bytes(a.en_la_nube)} solo en la nube (no ocupan este disco)` : "",
+  ].filter(Boolean).join(" · ");
+  const maxTipo = a.tipos.length ? a.tipos[0].bytes : 1;
+  let cambios = "";
+  if (d.anterior && d.cambios) {
+    const crecieron = d.cambios.filter((c) => c.diferencia > 0).slice(0, 15);
+    const dif = a.total - d.anterior.total;
+    cambios = `<div class="panel bloque"><div class="fila entre"><h3>Qué creció desde el ${hora(d.anterior.fin_ms, true)}</h3>
+      <span class="suave chico">Total: ${dif >= 0 ? "+" : "−"}${bytes(Math.abs(dif))}</span></div>
+      ${crecieron.length ? `<table class="bloque"><thead><tr><th>Carpeta</th><th class="num">Antes</th><th class="num">Ahora</th><th class="num">Creció</th></tr></thead><tbody>
+      ${crecieron.map((c) => `<tr><td class="recorte" title="${esc(c.ruta)}">${esc(c.ruta)}</td><td class="num">${bytes(c.antes)}</td><td class="num">${bytes(c.ahora)}</td><td class="num">+${bytes(c.diferencia)}</td></tr>`).join("")}
+      </tbody></table>` : `<p class="suave">Ninguna carpeta creció.</p>`}</div>`;
+  }
+  caja.innerHTML = `
+    <div class="panel bloque"><div class="fila entre"><h3>${esc(a.raiz)}: ${bytes(a.total)} en ${nf0.format(a.archivos)} archivos y ${nf0.format(a.carpetas)} carpetas</h3>
+      <span class="suave chico">${new Date(a.fin_ms).toLocaleString("es")} · tardó ${seg} s</span></div>
+      ${extra ? `<p class="suave chico">${extra}</p>` : ""}</div>
+    ${cambios}
+    <div class="dos-col bloque">
+      <div class="panel"><h3>Carpetas</h3><div id="arbol-disco" class="bloque"></div></div>
+      <div class="panel"><h3>Espacio por tipo de archivo</h3><div class="bloque">${a.tipos.slice(0, 20).map((t) => `
+        <div class="fila entre chico"><span>${t.extension ? "." + esc(t.extension) : "(sin extensión)"} <span class="suave">${nf0.format(t.archivos)} archivos</span></span><span>${bytes(t.bytes)}</span></div>
+        <div class="barra" style="margin:2px 0 8px"><div style="width:${((t.bytes / maxTipo) * 100).toFixed(1)}%"></div></div>`).join("")}</div></div>
+    </div>
+    <div class="panel bloque"><h3>Archivos más grandes</h3>
+      <div class="tabla-caja bloque" style="max-height:480px"><table><thead><tr><th>Archivo</th><th class="num">Tamaño</th><th>Modificado</th><th></th></tr></thead><tbody>
+      ${a.grandes.map((g) => `<tr><td class="recorte" style="max-width:640px" title="${esc(g.ruta)}">${esc(g.ruta)}</td><td class="num">${bytes(g.tamano)}</td><td>${hora(g.modificado_ms, true)}</td>
+        <td><button class="abrir-explorador" data-ruta="${esc(g.ruta)}">Mostrar en el Explorador</button></td></tr>`).join("")}
+      </tbody></table></div></div>`;
+  $("#arbol-disco").appendChild(nodoArbol(a.arbol, a.raiz, a.arbol.tamano, true));
+  $$(".abrir-explorador", caja).forEach((b) => (b.onclick = () => abrirEnExplorador(b.dataset.ruta)));
+}
+async function abrirEnExplorador(ruta) {
+  try { await api("/api/disco/abrir", { method: "POST", body: JSON.stringify({ id: analisisDisco.id, ruta }) }); }
+  catch (e) { alert("No se pudo abrir: " + e.message); }
+}
+// Árbol de carpetas: los hijos se dibujan recién al abrir cada carpeta.
+function nodoArbol(n, ruta, total, abierto) {
+  const d = document.createElement("details");
+  d.open = !!abierto;
+  const p = total ? (n.tamano / total) * 100 : 0;
+  d.innerHTML = `<summary class="fila entre chico" style="cursor:pointer;gap:8px;padding:2px 0">
+      <span class="recorte" style="max-width:55%">${esc(n.nombre)}</span>
+      <span class="fila" style="gap:8px"><span class="barra" style="width:90px"><div style="width:${p.toFixed(1)}%"></div></span>
+      <span style="min-width:70px;text-align:right">${bytes(n.tamano)}</span>
+      <button class="chico" title="Mostrar en el Explorador" style="padding:1px 6px">Abrir</button></span></summary>`;
+  $("button", d).onclick = (e) => { e.preventDefault(); abrirEnExplorador(ruta); };
+  const hijos = document.createElement("div");
+  hijos.style.marginLeft = "16px";
+  d.appendChild(hijos);
+  const llenar = () => {
+    if (hijos.childElementCount) return;
+    for (const h of n.hijos) hijos.appendChild(nodoArbol(h, unirRuta(ruta, h.nombre), total, false));
+    if (n.otros > 0) hijos.insertAdjacentHTML("beforeend", `<div class="suave chico" style="padding:2px 0">Carpetas más pequeñas: ${bytes(n.otros)}</div>`);
+  };
+  if (d.open) llenar();
+  d.addEventListener("toggle", () => d.open && llenar());
+  return d;
+}
+AL_ENTRAR.disco = () => { atajosDisco(); cargarDisco(); };
 
 // =====================================================================
 // Arranque
