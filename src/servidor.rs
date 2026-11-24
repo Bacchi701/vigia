@@ -314,6 +314,38 @@ fn api(p: &Peticion, estado: &Arc<Estado>) -> Resultado<Respuesta> {
             crate::win::sistema_extra::mostrar_en_explorador(ruta)?;
             Respuesta::json(&serde_json::json!({ "ok": true }))
         }
+        // ---------- Inicio, conexiones y avisos ----------
+        ("GET", "/api/inicio") => {
+            let entradas = crate::inicio::leer(crate::win::version::leer);
+            Respuesta::json(&entradas)
+        }
+        ("GET", "/api/conexiones") => {
+            let procesos = bloquear(&estado.ultima)
+                .as_ref()
+                .map(|m| m.procesos.clone())
+                .unwrap_or_default();
+            let crudas = crate::win::red::conexiones()?;
+            Respuesta::json(&serde_json::json!({
+                "conexiones": crate::conexiones::armar(&crudas, &procesos),
+                "escucha": crate::conexiones::puertos_en_escucha(&crudas, &procesos),
+            }))
+        }
+        ("POST", "/api/revisar") => {
+            let n = crate::app::revisar_cambios(estado)?;
+            Respuesta::json(&serde_json::json!({ "cambios": n }))
+        }
+        ("GET", "/api/avisos") => {
+            let limite = num("limite", 200)?.clamp(1, 2000) as usize;
+            let conn = bloquear(&estado.base);
+            Respuesta::json(&serde_json::json!({
+                "avisos": crate::avisos::listar(&conn, limite)?,
+                "sin_ver": crate::avisos::sin_ver(&conn)?,
+            }))
+        }
+        ("POST", "/api/avisos/vistos") => {
+            let n = crate::avisos::marcar_vistos(&bloquear(&estado.base))?;
+            Respuesta::json(&serde_json::json!({ "marcados": n }))
+        }
         ("POST", "/api/apagar") => {
             estado.pedir_detener();
             Respuesta::json(&serde_json::json!({ "ok": true }))

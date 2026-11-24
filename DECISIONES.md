@@ -62,8 +62,19 @@ No se usa `sysinfo` ni crates parecidos: las llamadas a Windows están escritas 
 - **Archivos solo en la nube (OneDrive) se suman aparte** (atributos `OFFLINE` / `RECALL_ON_DATA_ACCESS`) · sumarlos al total · no ocupan espacio en el disco.
 - **Tamaño = tamaño lógico del archivo** · tamaño en disco (clústeres, compresión) · obtener el tamaño real asignado requiere abrir cada archivo (`GetCompressedFileSizeW`), mucho más lento.
 - **Recorrido iterativo con pila propia** · recursión · una ruta muy profunda no desborda la pila del hilo.
-- **Prefijo `\?\`** en las rutas · nada · permite rutas de más de 260 caracteres.
+- **Prefijo `\\?\`** en las rutas · nada · permite rutas de más de 260 caracteres.
 - **Se guarda un árbol resumido** (carpetas ≥ 0,1 % del total, máx. 4000 nodos y 12 niveles), los 100 archivos más grandes y 60 tipos · guardar todo · una unidad completa puede tener cientos de miles de carpetas; el resumen cabe en unos cientos de KB de JSON.
 - **Se conservan los últimos 10 análisis por raíz; la comparación usa el análisis completo anterior** · comparar también con cancelados · un análisis cancelado está incompleto y daría diferencias falsas (igual se guarda y se puede ver, marcado como incompleto).
 - **«Mostrar en el Explorador» solo acepta rutas que aparecen en un análisis guardado** · aceptar cualquier ruta · la API no debe servir para abrir rutas arbitrarias. Usa `explorer.exe /select,"ruta"`. No se probó abrir de verdad (solo el rechazo de rutas ajenas) para no abrir ventanas sin supervisión.
 - **Pruebas solo sobre la carpeta del proyecto y árboles generados en `target/tmp`**, como pide el plan. Los árboles y la unión de prueba se dejan ahí (no se borran carpetas recursivamente).
+
+## H5 · Inicio y conexiones
+
+- **Claves revisadas**: `Run` y `RunOnce` de HKCU y HKLM, y `Run` de `WOW6432Node`, más las carpetas de inicio del usuario y comunes · también servicios y tareas programadas · el plan pide claves Run y carpetas de inicio; servicios y tareas serían otro tema.
+- **Estado «desactivada»** leído de `Explorer\StartupApproved` (primer byte impar = desactivada) · no mostrarlo · así coincide con el Administrador de tareas. Es solo lectura.
+- **Los accesos directos `.lnk` se muestran por su nombre**, sin resolver su destino · resolverlos con `IShellLink` (COM) · agrega COM solo para esto.
+- **Revisión cada 60 s en un hilo propio, con la referencia guardada en la base** · comparar solo en memoria · así también se detectan cambios hechos mientras Vigía estaba cerrado. La primera revisión solo guarda la referencia.
+- **Puertos conocidos se acumulan** y la clave es protocolo + puerto + alcance + nombre del programa (no el PID) · comparar solo contra la revisión anterior · un programa que reinicia o un puerto que se cierra y reabre no vuelve a avisar.
+- **Solo TCP genera avisos de puerto nuevo** · también UDP · los puertos UDP cambian a cada rato (consultas DNS) y serían ruido. UDP sí se muestra en la lista.
+- **Sin resolución inversa de DNS** · mostrar nombres de dominio · enviaría consultas a internet por cada dirección; la regla es que nada salga del PC salvo cargo.
+- **«Accesible desde»**: 0.0.0.0/:: = toda la red; IP de una interfaz = la red de esa dirección; 127.x/::1 = solo este equipo.

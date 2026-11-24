@@ -9,9 +9,9 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 | H0 Preparación | terminado | 2026-11-24T05:07:23-03:00 |
 | H1 Colector | terminado | 2026-11-24T05:15:03.6424647-03:00 |
 | H2 Historial | terminado | 2026-11-24T05:18:59.5027222-03:00 |
-| H3 Interfaz | terminado (revisión del subagente en curso) | 2026-11-24T05:28:45.3947719-03:00 |
+| H3 Interfaz | terminado (revisión recibida, ver REVISION_H3.md) | 2026-11-24T05:28:45.3947719-03:00 |
 | H4 Disco | terminado | 2026-11-24T05:35:34.5801355-03:00 |
-| H5 Inicio y conexiones | pendiente | |
+| H5 Inicio y conexiones | terminado | 2026-11-24T05:42:52.4085010-03:00 |
 | H6 Avisos | pendiente | |
 | H7 Entrega | pendiente | |
 | Extra 1 Resumen semanal | pendiente | |
@@ -59,8 +59,18 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 - Prueba manual en el navegador (release): análisis de `C:\Users\BRYAN\vigia` (1,3 GB, 2479 archivos, 1 s) y segundo análisis con comparación; sin errores de consola.
 - `cargo clippy --all-targets -- -D warnings` sin avisos.
 
+### H5
+- `cargo test`: 48 pruebas pasan (33 unitarias + 1 arranque + 4 colector + 3 disco + 1 historial + 6 servidor).
+  - Lectura real del inicio (registro `Run`/`RunOnce` de HKCU, HKLM y WOW6432Node, más carpetas de inicio) sin fallar; extracción del ejecutable de comandos con comillas, sin comillas y con `%windir%`.
+  - Comparación de revisiones: la primera solo guarda referencia; luego detecta entradas nuevas y quitadas.
+  - Tablas TCP/UDP IPv4/IPv6: un `TcpListener` propio aparece en escucha con el PID y el nombre de proceso correctos.
+  - Puertos nuevos: avisan una sola vez (si se cierra y reabre no repite); UDP no genera avisos.
+  - API: `/api/inicio`, `/api/conexiones`, `POST /api/revisar` (un puerto abierto después de la referencia produce el aviso `puerto_nuevo`), `/api/avisos` y marcar vistos.
+- Prueba manual (release): vistas Inicio, Conexiones y Avisos con datos reales. Se corrigió un error encontrado ahí: un puerto en la IP de una interfaz (no 0.0.0.0) aparecía como «solo este equipo».
+- `cargo clippy --all-targets -- -D warnings` sin avisos.
+
 ## Qué sigue
-Aplicar la revisión de H3 cuando llegue. H5 Inicio y conexiones.
+Aplicar la revisión de H3 (`REVISION_H3.md`). Luego H6 Avisos.
 
 ## Problemas abiertos
 Ninguno.

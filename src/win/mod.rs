@@ -12,6 +12,7 @@
 pub mod archivos;
 pub mod proceso;
 pub mod red;
+pub mod registro;
 pub mod sistema;
 pub mod sistema_extra;
 pub mod version;

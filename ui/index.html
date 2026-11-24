@@ -233,6 +233,41 @@ tbody tr.elegido { background: var(--acento-suave); }
     </div>
     <div id="resultado-disco"></div>
   </section>
+
+  <!-- ===================== INICIO ===================== -->
+  <section data-vista="inicio">
+    <div class="fila entre">
+      <p class="suave chico" style="margin:0">Programas que Windows abre al iniciar sesión, leídos de las claves <b>Run</b> del registro y de las carpetas de inicio.
+        Vigía solo los muestra: para desactivar uno usa el Administrador de tareas → Aplicaciones de arranque.</p>
+      <button id="revisar-inicio">Revisar ahora</button>
+    </div>
+    <div class="tabla-caja bloque"><table id="tabla-inicio"><thead><tr>
+      <th>Nombre</th><th>Estado</th><th>Empresa</th><th>Comando</th><th>Origen</th>
+    </tr></thead><tbody></tbody></table></div>
+    <div class="panel bloque"><h3>Cambios detectados</h3><div id="cambios-inicio" class="bloque"></div></div>
+  </section>
+
+  <!-- ===================== CONEXIONES ===================== -->
+  <section data-vista="conexiones">
+    <p class="suave chico" style="margin-top:0">Qué programas tienen conexiones abiertas y hacia qué direcciones. Vigía no lee el contenido de las conexiones ni consulta nombres de dominio.</p>
+    <div class="panel"><div class="fila entre"><h3>Puertos en escucha</h3><span class="suave chico">Los puertos marcados en naranja aceptan conexiones de otros equipos si el firewall lo permite.</span></div>
+      <div class="tabla-caja bloque" style="max-height:360px"><table id="tabla-escucha"><thead><tr>
+        <th>Programa</th><th class="num">PID</th><th>Protocolo</th><th class="num">Puerto</th><th>Dirección</th><th>Accesible desde</th>
+      </tr></thead><tbody></tbody></table></div></div>
+    <div class="panel bloque"><div class="fila entre"><h3>Conexiones activas</h3>
+      <div class="fila"><input id="filtro-conexiones" type="search" placeholder="Filtrar por programa o dirección" size="32" aria-label="Filtrar conexiones">
+      <button id="refrescar-conexiones">Actualizar</button></div></div>
+      <div class="tabla-caja bloque"><table id="tabla-conexiones"><thead><tr>
+        <th>Programa</th><th class="num">PID</th><th>Protocolo</th><th>Local</th><th>Remota</th><th>Destino</th><th>Estado</th>
+      </tr></thead><tbody></tbody></table></div></div>
+  </section>
+
+  <!-- ===================== AVISOS ===================== -->
+  <section data-vista="avisos">
+    <div class="fila entre"><h2>Avisos</h2><button id="marcar-vistos">Marcar todos como vistos</button></div>
+    <div id="reglas" class="bloque"></div>
+    <div class="panel bloque"><div id="lista-avisos"></div></div>
+  </section>
 </main>
 
 <aside id="detalle" aria-label="Detalle del proceso">
@@ -316,7 +351,7 @@ $("#boton-tema").onclick = () => aplicarTema(document.documentElement.dataset.te
 // Navegación entre vistas
 // =====================================================================
 const VISTAS = [
-  ["ahora", "Ahora"], ["historial", "Historial"], ["aplicaciones", "Aplicaciones"], ["disco", "Disco"],
+  ["ahora", "Ahora"], ["historial", "Historial"], ["aplicaciones", "Aplicaciones"], ["disco", "Disco"], ["inicio", "Inicio"], ["conexiones", "Conexiones"], ["avisos", "Avisos"],
 ];
 let vista = "ahora";
 function irA(v) {
@@ -783,6 +818,73 @@ function nodoArbol(n, ruta, total, abierto) {
 AL_ENTRAR.disco = () => { atajosDisco(); cargarDisco(); };
 
 // =====================================================================
+// Vista INICIO
+// =====================================================================
+async function cargarInicio() {
+  let entradas, avisos;
+  try { [entradas, avisos] = await Promise.all([api("/api/inicio"), api("/api/avisos?limite=500")]); } catch (e) { return; }
+  $("#tabla-inicio tbody").innerHTML = entradas.length ? entradas.map((e) => {
+    const estado = e.habilitada === false ? `<span class="etiqueta">Desactivada</span>` : `<span class="etiqueta">Activa</span>`;
+    const falta = e.existe === false ? ` <span class="etiqueta nueva" title="El archivo no existe">No encontrado</span>` : "";
+    return `<tr title="${esc(e.ejecutable || "")}"><td class="nombre-app recorte">${esc(e.nombre)}${e.descripcion ? `<small>${esc(e.descripcion)}</small>` : ""}</td>
+      <td>${estado}${falta}</td><td class="recorte">${esc(e.empresa || "No declarada")}</td>
+      <td class="recorte" style="max-width:420px">${esc(e.comando)}</td><td class="suave chico">${esc(e.origen)}</td></tr>`;
+  }).join("") : `<tr><td colspan="5" class="vacio">No hay programas de inicio.</td></tr>`;
+  const cambios = avisos.avisos.filter((a) => a.tipo.startsWith("inicio_"));
+  $("#cambios-inicio").innerHTML = cambios.length ? listaAvisos(cambios)
+    : `<p class="suave">Sin cambios desde que Vigía empezó a vigilar. Vigía revisa cada minuto.</p>`;
+}
+$("#revisar-inicio").onclick = async () => { await api("/api/revisar", { method: "POST" }).catch(() => {}); cargarInicio(); };
+AL_ENTRAR.inicio = cargarInicio;
+
+// =====================================================================
+// Vista CONEXIONES
+// =====================================================================
+let conexiones = [];
+async function cargarConexiones() {
+  let d;
+  try { d = await api("/api/conexiones"); } catch (e) { return; }
+  $("#tabla-escucha tbody").innerHTML = d.escucha.map((p) => `<tr><td class="nombre-app">${esc(p.proceso)}</td><td class="num">${p.pid}</td>
+    <td>${p.protocolo}</td><td class="num">${p.puerto}</td><td>${esc(p.direccion)}</td>
+    <td><span class="etiqueta ${p.expuesto ? "nueva" : ""}">${esc(p.accesible[0].toUpperCase() + p.accesible.slice(1))}</span></td></tr>`).join("");
+  conexiones = d.conexiones.filter((c) => c.protocolo === "TCP" && c.remota && c.estado !== "en escucha");
+  pintarConexiones();
+}
+function pintarConexiones() {
+  const f = $("#filtro-conexiones").value.trim().toLowerCase();
+  const filas = conexiones.filter((c) => !f || [c.proceso, c.remota, String(c.pid)].some((x) => (x || "").toLowerCase().includes(f)))
+    .sort((a, b) => a.proceso.localeCompare(b.proceso) || a.puerto_remoto - b.puerto_remoto);
+  const dir = (ip, p) => (ip.includes(":") ? `[${esc(ip)}]` : esc(ip)) + ":" + p;
+  $("#tabla-conexiones tbody").innerHTML = filas.length ? filas.map((c) => `<tr title="${esc(c.ruta || "")}"><td class="nombre-app">${esc(c.proceso)}</td>
+    <td class="num">${c.pid}</td><td>${c.protocolo}</td><td>${dir(c.local, c.puerto_local)}</td><td>${dir(c.remota, c.puerto_remoto)}</td>
+    <td>${esc(c.alcance)}</td><td>${esc(c.estado)}</td></tr>`).join("") : `<tr><td colspan="7" class="vacio">Sin conexiones.</td></tr>`;
+}
+$("#filtro-conexiones").oninput = pintarConexiones;
+$("#refrescar-conexiones").onclick = cargarConexiones;
+AL_ENTRAR.conexiones = cargarConexiones;
+
+// =====================================================================
+// Vista AVISOS
+// =====================================================================
+function listaAvisos(avisos) {
+  return avisos.map((a) => `<div style="padding:8px 0;border-bottom:1px solid var(--borde)">
+    <div class="fila entre"><b>${esc(a.titulo)}</b><span class="suave chico">${a.visto ? "" : `<span class="etiqueta nueva">Nuevo</span> `}${new Date(a.ts).toLocaleString("es")}</span></div>
+    <div class="suave chico" style="word-break:break-all">${esc(a.detalle)}</div></div>`).join("");
+}
+async function cargarAvisos() {
+  let d;
+  try { d = await api("/api/avisos?limite=300"); } catch (e) { return; }
+  $("#lista-avisos").innerHTML = d.avisos.length ? listaAvisos(d.avisos) : `<div class="vacio">No hay avisos.</div>`;
+  marcarContador(d.sin_ver);
+}
+function marcarContador(n) {
+  const b = $('#nav button[data-v="avisos"]');
+  if (b) b.textContent = n ? `Avisos (${n})` : "Avisos";
+}
+$("#marcar-vistos").onclick = async () => { await api("/api/avisos/vistos", { method: "POST" }).catch(() => {}); cargarAvisos(); };
+AL_ENTRAR.avisos = cargarAvisos;
+
+// =====================================================================
 // Arranque
 // =====================================================================
 function redibujarTodo() {
@@ -800,6 +902,10 @@ async function arrancar() {
   await actualizarAhora();
   // Se actualiza cada 2 s, solo mientras la pestaña está visible.
   setInterval(() => { if (!document.hidden && vista === "ahora") actualizarAhora(); }, 2000);
+  // Contador de avisos sin ver en el menú, cada 30 s.
+  const contar = () => api("/api/avisos?limite=1").then((d) => marcarContador(d.sin_ver)).catch(() => {});
+  contar();
+  setInterval(() => { if (!document.hidden) contar(); }, 30000);
 }
 arrancar();
 </script>

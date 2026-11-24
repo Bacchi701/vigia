@@ -216,7 +216,47 @@ pub fn iniciar(config: Config) -> Resultado<App> {
             .name("servidor".into())
             .spawn(move || crate::servidor::atender(&servidor, &e))?,
     );
+    let e = Arc::clone(&estado);
+    hilos.push(
+        std::thread::Builder::new()
+            .name("vigilante".into())
+            .spawn(move || bucle_vigilante(&e))?,
+    );
     Ok(App { estado, hilos })
+}
+
+/// Cada minuto revisa inicio y puertos en escucha y registra avisos.
+/// La primera revisión espera unos segundos para tener nombres de procesos.
+fn bucle_vigilante(estado: &Estado) {
+    let mut proxima = Instant::now() + Duration::from_secs(5);
+    while !estado.detenido() {
+        if Instant::now() >= proxima {
+            proxima = Instant::now() + Duration::from_secs(60);
+            if let Err(e) = revisar_cambios(estado) {
+                eprintln!("[vigía] error al revisar inicio y puertos: {e}");
+            }
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Una revisión de inicio y puertos (también la usa la API para forzarla).
+pub fn revisar_cambios(estado: &Estado) -> Resultado<usize> {
+    let entradas = crate::inicio::leer(win::version::leer);
+    let procesos = bloquear(&estado.ultima)
+        .as_ref()
+        .map(|m| m.procesos.clone())
+        .unwrap_or_default();
+    let crudas = win::red::conexiones()?;
+    let puertos = crate::conexiones::puertos_en_escucha(&crudas, &procesos);
+    let conn = bloquear(&estado.base);
+    let mut cambios = crate::vigilante::revisar_inicio(&conn, &entradas)?;
+    cambios.extend(crate::vigilante::revisar_puertos(&conn, &puertos)?);
+    let ts = ahora_ms();
+    for c in &cambios {
+        crate::avisos::registrar(&conn, ts, c.tipo, &c.titulo, &c.detalle)?;
+    }
+    Ok(cambios.len())
 }
 
 impl App {

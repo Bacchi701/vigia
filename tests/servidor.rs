@@ -221,3 +221,53 @@ fn analisis_de_disco_por_la_api() {
     let r = pedir(puerto, "POST", "/api/disco/abrir", &t, &sin_id).unwrap();
     assert_eq!(r.estado, 400);
 }
+
+#[test]
+fn inicio_conexiones_y_avisos_por_la_api() {
+    let p = Prueba::nueva();
+    p.esperar_muestras(1);
+    let puerto = p.app().puerto();
+    let token = p.app().token().to_string();
+    let t = [("X-Vigia-Token", token.as_str())];
+
+    assert!(p.json("/api/inicio").as_array().is_some());
+
+    // Un puerto propio en escucha aparece con el nombre del proceso.
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mio = l.local_addr().unwrap().port();
+    let c = p.json("/api/conexiones");
+    let escucha = c["escucha"].as_array().unwrap();
+    let fila = escucha
+        .iter()
+        .find(|x| x["puerto"] == mio && x["pid"] == std::process::id())
+        .expect("el puerto de la prueba aparece en escucha");
+    assert_eq!(fila["expuesto"], false);
+    assert!(
+        fila["proceso"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .ends_with(".exe")
+    );
+
+    // Revisión forzada: la primera solo guarda la referencia.
+    let r = pedir(puerto, "POST", "/api/revisar", &t, "").unwrap();
+    assert_eq!(r.estado, 200, "{}", r.cuerpo);
+    // Un puerto nuevo después de la referencia genera un aviso.
+    let l2 = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let nuevo = l2.local_addr().unwrap().port();
+    let r = pedir(puerto, "POST", "/api/revisar", &t, "").unwrap();
+    assert_eq!(r.estado, 200);
+    let a = p.json("/api/avisos");
+    let lista = a["avisos"].as_array().unwrap();
+    assert!(
+        lista.iter().any(|x| x["tipo"] == "puerto_nuevo"
+            && x["titulo"].as_str().unwrap().contains(&nuevo.to_string())),
+        "{a}"
+    );
+    assert!(a["sin_ver"].as_i64().unwrap() >= 1);
+    let r = pedir(puerto, "POST", "/api/avisos/vistos", &t, "").unwrap();
+    assert_eq!(r.estado, 200);
+    assert_eq!(p.json("/api/avisos")["sin_ver"], 0);
+    drop((l, l2));
+}

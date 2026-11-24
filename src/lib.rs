@@ -10,11 +10,15 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod app;
+pub mod avisos;
 pub mod base;
 pub mod cliente;
 pub mod colector;
+pub mod conexiones;
 pub mod disco;
 pub mod error;
 pub mod historial;
+pub mod inicio;
 pub mod servidor;
+pub mod vigilante;
 pub mod win;
