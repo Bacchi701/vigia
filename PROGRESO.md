@@ -42,7 +42,7 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 - `cargo clippy --all-targets -- -D warnings` sin avisos de código.
 
 ### H3
-- `cargo test`: 33 pruebas pasan. Nuevas: `tests/servidor.rs` (4) y `tests/arranque.rs` (1), más unitarias de servidor y cliente.
+- `cargo test`: 27 pruebas pasan (17 unitarias + 4 colector + 1 historial + 4 servidor + 1 arranque). Nuevas: `tests/servidor.rs` (4) y `tests/arranque.rs` (1), más unitarias de servidor y cliente.
   - La página carga con CSP y sin recursos externos; Host ajeno → 403, Origin ajeno → 403 (también para apagar), sin token o con token incorrecto → 401; Origin propio y `localhost` aceptados.
   - `/api/ahora` incluye el proceso de la prueba; `/api/proceso`, `/api/historial/*`, `/api/apps` responden; parámetro inválido → 400.
   - Arranque real de `vigia.exe --sin-navegador --datos ...`: escribe su archivo de estado, sirve la página, un segundo arranque detecta la instancia y sale, `--detener` la cierra y borra el archivo.
