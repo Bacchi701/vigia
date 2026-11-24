@@ -29,3 +29,14 @@ No se usa `sysinfo` ni crates parecidos: las llamadas a Windows están escritas 
 - **Unidades**: solo fijas y extraíbles, consultadas cada 30 s · incluir unidades de red · consultar una unidad de red caída puede colgar el colector.
 - **E/S por proceso** = bytes de lectura/escritura de `IO_COUNTERS`, que mezclan disco, red y dispositivos · separarlos requiere ETW y administrador.
 - **Modos de prueba en el mismo ejecutable** (`--prueba-cpu S`, `--prueba-memoria MB S`) · un binario aparte · las pruebas lanzan `vigia.exe` en ese modo, que termina solo, y además lo cierran en `Drop`.
+
+## H2 · Historial
+
+- **Aplicación = procesos con el mismo nombre de ejecutable** (sin distinguir mayúsculas) · agrupar por ruta · más simple y es como lo piensa una persona ("Chrome"); la ruta y la descripción se guardan aparte en la tabla `apps`.
+- **Por minuto se guardan solo las 12 apps con más CPU, las 12 con más memoria y las 5 con más E/S, más una fila `(otros)`** con la suma del resto · guardar todas · con ~370 procesos serían ~100 filas por minuto y ~4 millones de filas al mes; así son ~15–25 filas por minuto y los totales siguen cuadrando.
+- **Promedios del minuto cuentan como 0 las muestras en que la app no estaba** · promediar solo cuando estaba · así la suma de las apps da el total del sistema.
+- **En consultas por rango, `cpu_prom` y `mem_prom` se promedian sobre todo el rango**; además se entrega `mem_prom_activa` (solo mientras estuvo abierta) · un solo promedio · ordenar por el promedio del rango premia lo que más consumió en total.
+- **Retención: 30 días, y tope de 200 MB** (borrando por horas desde lo más viejo, nunca la última hora) · borrar por días · por horas se pasa menos del tope. `auto_vacuum=INCREMENTAL` + `PRAGMA incremental_vacuum` devuelve el espacio sin reescribir el archivo.
+- **WAL** (`journal_mode=WAL`) · modo por defecto · la interfaz puede leer mientras el colector escribe.
+- **Hora como parámetro en todo el historial** · un trait `Reloj` · las pruebas simulan horas de datos con solo pasar números (reloj simulado), sin trait extra.
+- **Pruebas que escriben en disco usan `CARGO_TARGET_TMPDIR`** (dentro de `target/`) y borran solo sus archivos concretos · carpeta temporal del sistema · la regla es escribir solo dentro de la carpeta del proyecto.
