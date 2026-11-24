@@ -1,0 +1,8 @@
+/target/
+/datos/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.tmp
+vigia_estado.json
