@@ -10,7 +10,7 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 | H1 Colector | terminado | 2026-11-24T05:15:03.6424647-03:00 |
 | H2 Historial | terminado | 2026-11-24T05:18:59.5027222-03:00 |
 | H3 Interfaz | terminado (revisión del subagente en curso) | 2026-11-24T05:28:45.3947719-03:00 |
-| H4 Disco | pendiente | |
+| H4 Disco | terminado | 2026-11-24T05:35:34.5801355-03:00 |
 | H5 Inicio y conexiones | pendiente | |
 | H6 Avisos | pendiente | |
 | H7 Entrega | pendiente | |
@@ -49,8 +49,18 @@ INICIO: 2026-11-24T05:02:05.2553851-03:00
 - Prueba manual con la versión release en el panel del navegador: vistas Ahora, detalle «¿Qué es esto?», Historial y Aplicaciones, en modo claro y oscuro, **sin errores en la consola de JavaScript**.
 - `cargo clippy --all-targets -- -D warnings` sin avisos.
 
+### H4
+- `cargo test`: 35 pruebas pasan (21 unitarias + 1 arranque + 4 colector + 3 disco + 1 historial + 5 servidor).
+  - Árbol generado en `target/tmp/arbol_disco` (6 archivos, 28 010 bytes, con una unión que apunta a la raíz): total, árbol, archivos grandes y tipos exactos; la unión se omite (1 enlace omitido, sin ciclo).
+  - Se agrega un archivo de 7000 bytes y la comparación muestra la carpeta `a\b` con +7000.
+  - Cancelar antes de empezar devuelve un análisis incompleto.
+  - Carpeta del proyecto: se analiza completa (incluye `.rs` y `.toml`; `target` pesa más de 1 MB).
+  - API: analizar, progreso, lista y resultado; ruta inválida → 400; «abrir» con ruta ajena o sin id → 400.
+- Prueba manual en el navegador (release): análisis de `C:\Users\BRYAN\vigia` (1,3 GB, 2479 archivos, 1 s) y segundo análisis con comparación; sin errores de consola.
+- `cargo clippy --all-targets -- -D warnings` sin avisos.
+
 ## Qué sigue
-Revisión de H3 por un subagente (en paralelo) y H4 Disco.
+Aplicar la revisión de H3 cuando llegue. H5 Inicio y conexiones.
 
 ## Problemas abiertos
 Ninguno.
